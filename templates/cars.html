@@ -13,9 +13,9 @@
   <tr><th>Car</th><th>Year</th><th>Distance</th><th>FOB price</th><th></th></tr>
   {% for car in cars %}
   <tr>
-    <td>{{ car.make }} {{ car.model }} ({{ car.body_type }})</td>
+    <td>{{ car.make }} {{ car.model }}{% if car.body_type %} ({{ car.body_type }}){% endif %}</td>
     <td>{{ car.year }}</td>
-    <td>{{ car.distance_km }} km</td>
+    <td>{% if car.distance_km %}{{ car.distance_km }} km{% else %}—{% endif %}</td>
     <td>${{ car.price_fob }}</td>
     <td><a href="/invoice/{{ car.id }}">Invoice</a></td>
   </tr>

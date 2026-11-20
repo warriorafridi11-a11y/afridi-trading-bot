@@ -53,17 +53,24 @@
   {% endfor %}
 </table>
 
-<h2>Questions for a human (open)</h2>
-<table>
-  <tr><th>Question</th><th>Status</th></tr>
-  {% for q in questions %}
-  <tr><td>{{ q.question }}</td><td>{{ q.status }}</td></tr>
-  {% else %}
-  <tr><td colspan="2">No open questions.</td></tr>
-  {% endfor %}
-</table>
+<h2>Unanswered questions — answer them here</h2>
+<p>When the bot does not know an answer, the customer's question is saved here as an open question. Type your answer and press Save. Saving does two things: it marks the question as answered, and it adds the question + answer to the Knowledge base below, so the next customer who asks the same thing gets the answer at once.</p>
+{% for q in questions %}
+<div class="unanswered">
+  <p><strong>Question:</strong> {{ q.question }}<br>
+  <small>Asked by: {{ q.user_name or 'Guest' }}{% if q.user_email %} ({{ q.user_email }}){% endif %}</small></p>
+  <form method="post" action="/admin/inquiry/answer/{{ q.id }}">
+    <label>Your answer<br><textarea name="answer" required rows="2" style="width:100%"></textarea></label><br>
+    <label>Topic<br><input type="text" name="topic" placeholder="e.g. payment"></label>
+    <button type="submit">Save answer</button>
+  </form>
+</div>
+{% else %}
+<p>No unanswered questions. Good — the bot knew everything so far.</p>
+{% endfor %}
 
-<h2>FAQs — add or delete</h2>
+<h2>Knowledge base — all FAQs</h2>
+<p>Every question + answer the bot knows. Add a new one by hand, or delete a wrong one.</p>
 <form method="post" action="/admin/faq/add">
   <label>Question<br><input type="text" name="question" required style="width:100%"></label><br>
   <label>Answer<br><input type="text" name="answer" required style="width:100%"></label><br>

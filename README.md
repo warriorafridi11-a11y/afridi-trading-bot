@@ -110,6 +110,90 @@ misses, number of tables), usage (users, chats, messages, messages
 today, invoices, open questions, FAQs), recent users and chats, and
 lets the admin add or delete FAQs.
 
+## Email for unanswered questions
+
+When the bot cannot answer a question, it saves the question as an
+open inquiry AND emails it at once to BOTH
+**csd@afriditrading.com** and **sales@afriditrading.com**, with the
+customer's name and email (if given), the question, and the date/time.
+If the email settings below are not set, the inquiry is still saved
+in the database and shown in the admin panel, and the code only logs
+"EMAIL SKIPPED" — the chat never crashes.
+
+To turn the email on, Wahaab must add these 4 environment variables
+in Vercel (Dashboard > project **afridi-trading-bot** > Settings >
+Environment Variables, then redeploy so they take effect):
+
+- `SMTP_HOST` = `smtp.gmail.com`
+- `SMTP_PORT` = `587`
+- `SMTP_USER` = the Gmail address that sends the email
+- `SMTP_PASS` = a Gmail **App Password** (16 letters), NOT the normal
+  Gmail password. Make one here: Google Account > Security > turn on
+  2-Step Verification > App passwords > pick "Mail" > copy the
+  16-letter password it shows. Never put the password in code,
+  GitHub, or chat.
+
+## Daily sync for new and sold vehicles
+
+Script: `scripts/sync_vehicles.py` (plain Python, no extra package).
+It reads the stock pages on afriditrading.com with plain HTTP, adds
+new cars to the Supabase cars table, updates the price if a car
+changed, and marks cars that are gone from the website as `sold`
+(it never deletes a row). It only marks cars sold on a FULL crawl.
+The bot's cache refreshes within 5 minutes, so the new data shows
+up in the bot soon after the sync runs.
+
+Exact commands (run from the repo folder):
+
+- Look only, change nothing:
+  `python3 scripts/sync_vehicles.py --dry-run --max-pages 2`
+- Normal daily run (first 10 pages):
+  `SUPABASE_URL=https://jlbapnqzntqlyjuqvtmq.supabase.co SUPABASE_ANON_KEY=<anon key> python3 scripts/sync_vehicles.py`
+- Full sync (all pages — this is the one that marks sold cars):
+  `SUPABASE_URL=https://jlbapnqzntqlyjuqvtmq.supabase.co SUPABASE_ANON_KEY=<anon key> python3 scripts/sync_vehicles.py --max-pages 0`
+
+The script prints a summary at the end: `new=X updated=Y marked
+sold=Z`, plus the sync time. No schedule is set up in this repo —
+the daily schedule will be set up separately. The Supabase cars
+table needs a `ref` column first (the seed SQL file adds it).
+
+## Real cars and import rules (Nov 2026)
+
+The bot's seed data is real data from afriditrading.com, not made up:
+
+- **317 cars**: the 10 original demo cars + 307 real cars read from
+  the stock pages 1–13 (24 cars per page). The site has 38,236 cars
+  on 1,594 pages, so this is a real sample of the newest listings,
+  not the whole stock. Stock pages 14–16 were blocked by the site's
+  rate limit on the day of the crawl. Every car has a real FOB price;
+  no price was invented. The listing pages show a fuel tag (Hybrid /
+  Light Oil / Diesel) but no body-type field, so `body_type` holds
+  the fuel tag.
+- **77 countries' import rules**: max car age, port, shipping time,
+  sailings, inspection and shipping line, read from
+  afriditrading.com/import and each country page. 6 countries
+  (Sudan, Tanzania, Togo, Uganda, Zambia, Zimbabwe) had their pages
+  blocked, so only their age limit from the import index page is
+  used. 7 Caribbean pages do not exist (Barbados, Belize, Saint
+  Lucia, Dominica, Saint Vincent, Saint Kitts, Haiti — all 404).
+  Sudan is left out: the site only says "See import rules".
+
+The bot answers "import rules for <country>" for any of these 77
+countries, and "show me cars under $<amount>" from the real cars.
+
+## Unanswered questions — how the bot learns
+
+1. A customer asks something the bot does not know. The bot saves
+   the question as an open inquiry (with the customer, if signed
+   in) and says so honestly.
+2. The admin opens the admin panel, finds it under "Unanswered
+   questions", types the answer and presses Save.
+3. Saving does two things: it marks the inquiry "answered" and adds
+   the question + answer to the Knowledge base (faqs table), and
+   clears the FAQ cache — so the next customer who asks the same
+   question gets the answer at once. The admin can also add or
+   delete Knowledge base entries by hand.
+
 ## Supabase — not connected yet
 
 The live bot still uses SQLite. On Vercel the SQLite file lives in

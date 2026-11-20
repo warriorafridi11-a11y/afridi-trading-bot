@@ -11,6 +11,9 @@ import sqlite3
 import time
 from datetime import datetime
 
+import smtplib
+from email.message import EmailMessage
+
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -57,6 +60,8 @@ GRADES = {
 }
 
 # Sample cars, like the cars on afriditrading.com. Price is the FOB price.
+# Real cars from afriditrading.com (stock pages 1-13, 308 cars, Nov 2026). The first 10 are the original demo cars.
+# Price is the FOB price. body_type holds the fuel tag the listing shows (Hybrid / Light Oil / Diesel), because the listing shows no body-type field.
 SAMPLE_CARS = [
     ("Toyota", "Aqua S", 2016, 140000, 1600, "Hybrid", "In stock"),
     ("Toyota", "Aqua S", 2014, 172000, 1500, "Hybrid", "In stock"),
@@ -68,30 +73,398 @@ SAMPLE_CARS = [
     ("Honda", "Fit", 2016, 115000, 1150, "Hatchback", "In stock"),
     ("Suzuki", "Swift XG", 2014, 99000, 2000, "Hatchback", "In stock"),
     ("Toyota", "Sienta Hybrid G", 2016, 277000, 3100, "Minivan", "In stock"),
+    ('Suzuki', 'Solio MV', 2021, 33000, 10550, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2023, 14000, 31050, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio SZ', 2022, 6000, 12350, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MV', 2021, 49000, 10350, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MZ', 2024, 20000, 14800, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MV', 2025, None, 16650, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MX', 2024, 15000, 10700, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2024, 24000, 31150, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2021, 25000, 25700, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MV', 2022, 36000, 11950, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2025, 11000, 32150, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute', 2022, 72000, 19050, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MV', 2024, 16000, 11300, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2022, 27000, 26050, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MZ', 2021, 36000, 8600, '', 'In stock'),
+    ('Suzuki', 'Solio MV', 2021, 3000, 12350, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2023, 25000, 30700, 'Hybrid', 'In stock'),
+    ('Nissan', 'Skyline Nismo', 2024, 18000, 40400, '', 'In stock'),
+    ('Suzuki', 'Solio MV', 2022, 31000, 12150, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey e:HEV Absolute EX', 2022, 20000, 26800, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MV', 2022, 34000, 12300, 'Hybrid', 'In stock'),
+    ('Suzuki', 'Solio MV', 2018, 14000, 9450, 'Hybrid', 'In stock'),
+    ('Honda', 'Odyssey Absolute EX', 2021, 40000, 22150, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy S-Z', 2024, 16000, 18800, '', 'In stock'),
+    ('Toyota', 'Voxy ZS Sparkle2', 2016, 107000, 7600, '', 'In stock'),
+    ('Toyota', 'Raize Z', 2020, 49000, 10500, '', 'In stock'),
+    ('Honda', 'Vezel Z Honda Sensing', 2018, 41000, 8200, 'Hybrid', 'In stock'),
+    ('Honda', 'Freed air', 2024, 18000, 15600, 'Hybrid', 'In stock'),
+    ('Honda', 'Freed closter', 2024, 19000, 15800, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel Hybrid Z Honda Sensing', 2018, 73000, 8800, 'Hybrid', 'In stock'),
+    ('Toyota', 'Raize Z', 2020, 51000, 8100, '', 'In stock'),
+    ('Toyota', 'Voxy ZS Sparkle', 2018, 71000, 13100, 'Hybrid', 'In stock'),
+    ('Honda', 'Fit Home', 2022, 34000, 7900, 'Hybrid', 'In stock'),
+    ('Honda', 'Freed G black style', 2022, 39000, 9400, 'Hybrid', 'In stock'),
+    ('BMW', 'X1 xDrive18d x line', 2019, 37000, 9000, 'Light Oil', 'In stock'),
+    ('Toyota', 'Prado TX L package matte black Ed', 2022, 26000, 25900, '', 'In stock'),
+    ('Lexus', 'UX F sports', 2023, 20000, 19100, '', 'In stock'),
+    ('Toyota', 'Corolla Cross Z', 2025, 13000, 16800, 'Hybrid', 'In stock'),
+    ('Lexus', 'RX elegant tourer', 2022, 13000, 25300, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy Hybrid S-Z', 2022, 38000, 18500, 'Hybrid', 'In stock'),
+    ('Honda', 'Freed e:HEV air', 2024, 13000, 16200, 'Hybrid', 'In stock'),
+    ('Lexus', 'ES F sports', 2019, 47000, 20600, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown Sport Z', 2023, 27000, 24700, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hiace Van DX GL package', 2022, 58000, 15900, 'Light Oil', 'In stock'),
+    ('Audi', 'Q3 35 TFSI S line', 2022, 28000, 18100, 'Hybrid', 'In stock'),
+    ('Toyota', 'Corolla Cross Z', 2023, 57000, 15800, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel Z', 2022, 46000, 13500, 'Hybrid', 'In stock'),
+    ('Toyota', 'Raize Z', 2025, 8000, 13500, 'Hybrid', 'In stock'),
+    ('Honda', 'Fit F package', 2015, 74000, 3400, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy Hybrid S-Z', 2023, 52000, 19100, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy S-Z', 2023, 26000, 20000, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel Z', 2021, 47000, 12400, 'Hybrid', 'In stock'),
+    ('Honda', 'Stepwgn Spada Cool Spirit H Sensing', 2017, 31000, 14500, '', 'In stock'),
+    ('Toyota', 'Crown Sport Z E-Four', 2024, 20000, 26400, 'Hybrid', 'In stock'),
+    ('BMW', 'X4 xDrive30i M Sport', 2019, 31000, 20500, '', 'In stock'),
+    ('Toyota', 'Raize Z', 2023, 33000, 11500, '', 'In stock'),
+    ('Honda', 'Stepwgn premium line', 2024, 27000, 20300, 'Hybrid', 'In stock'),
+    ('Lexus', 'RX F sports', 2021, 56000, 25300, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy S-Z', 2023, 20000, 19100, '', 'In stock'),
+    ('Honda', 'Vezel RS Honda Sensing', 2018, 82000, 7800, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy ZS Sparkle2', 2019, 36000, 17000, '', 'In stock'),
+    ('Toyota', 'Corolla Cross Z', 2024, 26000, 20000, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy S-Z', 2023, 28000, 19400, '', 'In stock'),
+    ('Lexus', 'NX Version L', 2023, 41000, 27800, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy ZS Sparkle', 2016, 76000, 8500, '', 'In stock'),
+    ('Toyota', 'Voxy S-Z', 2022, 31000, 18700, '', 'In stock'),
+    ('Honda', 'Vezel RS Honda Sensing', 2019, 39000, 9500, 'Hybrid', 'In stock'),
+    ('Lexus', 'NX F sports', 2022, 22000, 30300, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 adventure', 2025, 19000, 22600, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel X Honda Sensing', 2018, 61000, 8100, 'Hybrid', 'In stock'),
+    ('Honda', 'Stepwgn premium line', 2022, 28000, 20600, 'Hybrid', 'In stock'),
+    ('Toyota', 'Corolla Cross Hybrid Z', 2024, 29000, 15900, 'Hybrid', 'In stock'),
+    ('BMW', 'X1 xDrive18d M Sport', 2017, 49000, 8100, 'Light Oil', 'In stock'),
+    ('Lexus', 'NX F sports', 2025, 18000, 34400, 'Hybrid', 'In stock'),
+    ('Honda', 'Freed G Honda Sensing', 2021, 40000, 8800, '', 'In stock'),
+    ('Toyota', 'RAV4 G', 2023, 38000, 16200, '', 'In stock'),
+    ('Toyota', 'Yaris Cross Z', 2024, 13000, 14000, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel Z', 2021, 33000, 12800, 'Hybrid', 'In stock'),
+    ('BMW', 'X1 xDrive18d M Sport', 2020, 45000, 13500, 'Light Oil', 'In stock'),
+    ('Audi', 'Q5 40 TDI Quattro S line', 2021, 32000, 17900, 'Hybrid', 'In stock'),
+    ('BMW', 'X3 xDrive20d M Sport', 2018, 11000, 18200, 'Light Oil', 'In stock'),
+    ('Lexus', 'NX F sports', 2015, 103000, 9000, 'Hybrid', 'In stock'),
+    ('Honda', 'Fit L Honda Sensing', 2018, 48000, 5700, 'Hybrid', 'In stock'),
+    ('Honda', 'Freed G Honda Sensing', 2018, 86000, 4600, '', 'In stock'),
+    ('Honda', 'Freed G', 2023, 29000, 10900, 'Hybrid', 'In stock'),
+    ('Lexus', 'RX F sports', 2017, 59000, 15900, '', 'In stock'),
+    ('Toyota', 'Yaris Cross Z Adventure', 2023, 66000, 11900, 'Hybrid', 'In stock'),
+    ('Lexus', 'RX F Sports Performance', 2024, 36000, 41500, 'Hybrid', 'In stock'),
+    ('Toyota', 'Yaris Cross Z', 2020, 39000, 11800, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hilux Z', 2023, 10000, 22100, 'Light Oil', 'In stock'),
+    ('Lexus', 'Lbx elegant', 2025, 14000, 22900, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hiace Wagon GL', 2022, 26000, 25700, '', 'In stock'),
+    ('Toyota', 'Markx 250G', 2013, 82000, 5350, '', 'In stock'),
+    ('Toyota', 'Markx 250G', 2017, 82000, 7500, '', 'In stock'),
+    ('Toyota', 'Crown RS Limited', 2020, 98000, 17750, 'Hybrid', 'In stock'),
+    ('Toyota', 'Prius Phv S', 2019, 70000, 10000, 'Hybrid', 'In stock'),
+    ('Toyota', 'Markx premium', 2016, 21000, 9650, '', 'In stock'),
+    ('Toyota', 'Markx 250G', 2014, 36000, 9000, '', 'In stock'),
+    ('Toyota', 'Prius Phv A Premium', 2019, 48000, 15150, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2018, 45000, 24300, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2018, 83000, 19650, '', 'In stock'),
+    ('Toyota', 'Hiace Wagon Grand Cabin', 2025, 5000, 28950, '', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2018, 55000, 24300, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2019, 41000, 22150, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2018, 44000, 23550, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hiace Wagon GL', 2026, None, 27850, '', 'In stock'),
+    ('Toyota', 'Markx 250G', 2012, 89000, 9250, '', 'In stock'),
+    ('Toyota', 'Crown RS', 2018, 67000, 16650, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hiace Wagon bus', 2025, 1000, 35000, '', 'In stock'),
+    ('Toyota', 'Markx 250G', 2012, 67000, 3550, '', 'In stock'),
+    ('Toyota', 'Crown SC package', 2018, 43000, 19150, 'Hybrid', 'In stock'),
+    ('Toyota', 'Prius Phv Z', 2023, 13000, 20700, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hiace Wagon GL', 2026, None, 27500, '', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2019, 63000, 23550, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS', 2018, 91000, 17550, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Limited', 2020, 80000, 22550, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS', 2018, 65000, 18950, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown G', 2019, 49000, 22550, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS', 2020, 52000, 24300, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2018, 64000, 21800, 'Hybrid', 'In stock'),
+    ('Toyota', 'Crown RS Advance', 2022, 51000, 26950, 'Hybrid', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL', 2022, 109000, 18550, 'Diesel', 'In stock'),
+    ('Toyota', 'Harrier Z', 2021, 28000, 22500, '', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL', 2025, 18000, 31300, 'Diesel', 'In stock'),
+    ('Toyota', 'Harrier G', 2024, 12000, 22150, '', 'In stock'),
+    ('Toyota', 'Harrier G', 2021, 57000, 17850, 'Hybrid', 'In stock'),
+    ('Toyota', 'Harrier G', 2025, 12000, 22000, '', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL', 2021, 134000, 25550, 'Diesel', 'In stock'),
+    ('Toyota', 'Harrier Z', 2021, 45000, 21650, 'Hybrid', 'In stock'),
+    ('Toyota', 'Harrier G', 2021, 52000, 17700, '', 'In stock'),
+    ('Toyota', 'Harrier S', 2023, 24000, 18950, '', 'In stock'),
+    ('Toyota', 'Harrier G', 2025, 13000, 21050, '', 'In stock'),
+    ('Toyota', 'Harrier Z', 2023, 15000, 23950, 'Hybrid', 'In stock'),
+    ('Toyota', 'Harrier Z', 2020, 63000, 18500, 'Hybrid', 'In stock'),
+    ('Toyota', 'Harrier Z', 2024, 28000, 24300, '', 'In stock'),
+    ('Toyota', 'Harrier Z', 2023, 24000, 25000, '', 'In stock'),
+    ('Toyota', 'Harrier G', 2025, 18000, 21950, '', 'In stock'),
+    ('Toyota', 'Harrier G', 2024, 18000, 21450, '', 'In stock'),
+    ('Toyota', 'Harrier Z', 2020, 34000, 22650, 'Hybrid', 'In stock'),
+    ('Toyota', 'Harrier G', 2021, 30000, 18850, '', 'In stock'),
+    ('Toyota', 'Hiace Van DX', 2020, 76000, 15950, 'Diesel', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL', 2020, 51000, 25000, 'Diesel', 'In stock'),
+    ('Toyota', 'Harrier Z', 2023, 24000, 24650, '', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL', 2021, 113000, 25300, 'Diesel', 'In stock'),
+    ('Toyota', 'Harrier Z', 2021, 19000, 25000, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel G', 2021, 38000, 14000, '', 'In stock'),
+    ('Audi', 'A1 25TFSI Advanced Adda', 2022, 17000, 11000, '', 'In stock'),
+    ('Mercedes-Benz', 'E Class E200 coupe sports 360', 2019, 31000, 18000, '', 'In stock'),
+    ('BMW', '1 Series 118d M Sports One-Owner Car', 2022, 19000, 14000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'A Class A200d AMG line cleanliness', 2022, 23000, 15000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'C Class C180', 2017, 41000, 16000, '', 'In stock'),
+    ('BMW', '5 Series 523d xDriveM Sports Ed', 2021, 39000, 24000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'Cla CLA200d AMG line clean', 2019, 37000, 16000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'Cla CLA180 Shooting brake', 2016, 40000, 7000, '', 'In stock'),
+    ('Audi', 'A3 30TFSI S line navigation bag', 2022, 10000, 17000, '', 'In stock'),
+    ('Mercedes-Benz', 'A Class A200d', 2020, 31000, 11000, 'Light Oil', 'In stock'),
+    ('BMW', 'X1 xDrive 18d M Sports 4W', 2021, 38000, 14000, 'Light Oil', 'In stock'),
+    ('BMW', '2 Series 218d Grand Coupe M Sports', 2023, 27000, 16000, 'Light Oil', 'In stock'),
+    ('Audi', 'A4 35TDI S line one owner car semi', 2021, 35000, 17000, 'Light Oil', 'In stock'),
+    ('BMW', '2 Series 218d Grand Coupe M Sports', 2021, 29000, 12000, 'Light Oil', 'In stock'),
+    ('Audi', 'A3 Sports bag 1.4TFSI sport', 2018, 33000, 9000, '', 'In stock'),
+    ('BMW', '4 Series 420i', 2020, 27000, 20000, '', 'In stock'),
+    ('Audi', 'A5 40TDI Kuturo S line one owner', 2021, 33000, 20000, 'Light Oil', 'In stock'),
+    ('Audi', 'Q2 35TDI Advanced Navigation TV', 2022, 24000, 15000, 'Light Oil', 'In stock'),
+    ('BMW', '3 Series 320d M Sports One-Owner Car', 2015, 48000, 7000, 'Light Oil', 'In stock'),
+    ('BMW', '3 Series 320d Touring M Sports Clear', 2016, 24000, 12000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'E Class Wagon E220d Station Wagon Ban', 2018, 30000, 18000, 'Light Oil', 'In stock'),
+    ('BMW', '2 Series 218d Grant Aller M Sports', 2018, 49000, 8000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'Cla CLA200d Shooting Brake', 2020, 19000, 14000, 'Light Oil', 'In stock'),
+    ('BMW', '1 Series 118d M Sports One-Owner Car', 2017, 36000, 7000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'A Class A200d Sedan AMG Line Clear', 2021, 22000, 14000, 'Light Oil', 'In stock'),
+    ('BMW', 'X2 xDrive 18d M Sports 4', 2019, 43000, 10000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'C Class C220d AMG La', 2021, 24000, 24000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'B Class B200d AMG line one-owner car', 2022, 33000, 15000, 'Light Oil', 'In stock'),
+    ('BMW', '2 Series 218d grand coupe play ete', 2020, 22000, 12000, 'Light Oil', 'In stock'),
+    ('Mercedes-Benz', 'V Class V220d Sports Navigation TV 36', 2017, 20000, 22000, 'Light Oil', 'In stock'),
+    ('BMW', 'X3 xDrive 20i M Sports 4W', 2015, 35000, 9000, 'Light Oil', 'In stock'),
+    ('Audi', 'A1 25TFSI S line half leather', 2020, 34000, 12000, '', 'In stock'),
+    ('Lexus', 'NX NX350h', 2024, 16000, 27000, 'Hybrid', 'In stock'),
+    ('Mercedes-Benz', 'Cls CLS220d Sports Exclusive', 2020, 67000, 19000, 'Light Oil', 'In stock'),
+    ('Lexus', 'ES ES300h version L', 2019, 154000, 14000, 'Hybrid', 'In stock'),
+    ('BMW', 'X5 xDrive 40d M Sports', 2024, 15000, 43000, 'Hybrid', 'In stock'),
+    ('BMW', 'X3 20d xDrive M Sports', 2024, 14000, 32000, 'Hybrid', 'In stock'),
+    ('BMW', 'X2 xDrive 20d M Sports', 2025, 6000, 28000, 'Hybrid', 'In stock'),
+    ('BMW', '3 Series 320d Touring Luxury', 2016, 50000, 8000, 'Light Oil', 'In stock'),
+    ('BMW', '5 Series 530e M sports edition', 2021, 25000, 20000, 'Hybrid', 'In stock'),
+    ('BMW', '3 Series 318i Touring M Sports', 2021, 30000, 15000, '', 'In stock'),
+    ('Mercedes-Benz', 'Cls CLS220d Sports Exclusive', 2018, 41000, 22000, 'Light Oil', 'In stock'),
+    ('Lexus', 'NX NX200t F sport late specification', 2015, 86000, 11000, '', 'In stock'),
+    ('Toyota', 'Voxy 2.0ZS Kira 7-seater', 2016, 111000, 6000, '', 'In stock'),
+    ('Honda', 'Fit Basic', 2020, 103000, 5000, '', 'In stock'),
+    ('BMW', '4 Series 420i coupe luxury', 2015, 75000, 5000, '', 'In stock'),
+    ('BMW', '2 Series 218iActive Tour Alarm', 2015, 62000, 3000, '', 'In stock'),
+    ('BMW', '3 Series 320i luxury', 2017, 62000, 5000, '', 'In stock'),
+    ('Audi', 'A5 2.0TFSI Kuwatoro', 2015, 60000, 5000, '', 'In stock'),
+    ('Lexus', 'NX 200t I package spare T', 2016, 82000, 10000, '', 'In stock'),
+    ('Honda', 'Vezel e:HEV Z', 2023, 8000, 16000, 'Hybrid', 'In stock'),
+    ('Lexus', 'UX 250h version C', 2019, 16000, 17000, 'Hybrid', 'In stock'),
+    ('Lexus', 'RX RX450h version L', 2019, 54000, 23000, 'Hybrid', 'In stock'),
+    ('Toyota', 'Voxy ZS Sparkle', 2015, 83000, 10000, '', 'In stock'),
+    ('Lexus', 'Lbx Relax', 2024, 26000, 27850, 'Hybrid', 'In stock'),
+    ('Lexus', 'Lbx elegant', 2025, 7000, 29300, 'Hybrid', 'In stock'),
+    ('Mazda', 'MAZDA2 XD', 2023, 24000, 10350, 'Diesel', 'In stock'),
+    ('Lexus', 'RX RX450h F sports', 2020, 124000, 20700, 'Hybrid', 'In stock'),
+    ('Mazda', 'MAZDA2 XD', 2019, 65000, 6650, 'Diesel', 'In stock'),
+    ('Lexus', 'Lbx elegant', 2025, 10000, 28950, 'Hybrid', 'In stock'),
+    ('Lexus', 'Lbx relax', 2024, 16000, 29300, 'Hybrid', 'In stock'),
+    ('Lexus', 'Lbx relax', 2024, 18000, 30000, 'Hybrid', 'In stock'),
+    ('Nissan', 'AD Van VE', 2021, 28000, 6450, '', 'In stock'),
+    ('Honda', 'Vezel Z', 2025, 23000, 20350, 'Hybrid', 'In stock'),
+    ('Mazda', 'MAZDA2 15S', 2019, 18000, 8700, '', 'In stock'),
+    ('Lexus', 'UX 250h_F Sports', 2021, 52000, 23500, 'Hybrid', 'In stock'),
+    ('Lexus', 'Lbx cool', 2024, 11000, 31050, 'Hybrid', 'In stock'),
+    ('Honda', 'Vezel Z', 2025, 15000, 20000, 'Hybrid', 'In stock'),
+    ('Lexus', 'Lbx Morizou RR', 2026, 10000, 40000, '', 'In stock'),
+    ('Lexus', 'RX 450h-version L', 2021, 33000, 35700, 'Hybrid', 'In stock'),
+    ('Mazda', 'MAZDA2 15S', 2019, 43000, 8450, '', 'In stock'),
+    ('Mazda', 'MAZDA2 15S', 2022, 35000, 10000, '', 'In stock'),
+    ('Mazda', 'Axela 15S', 2018, 84000, 7150, '', 'In stock'),
+    ('Lexus', 'Lbx cool', 2024, 14000, 30350, 'Hybrid', 'In stock'),
+    ('Lexus', 'Lbx relax', 2024, 12000, 30000, 'Hybrid', 'In stock'),
+    ('Mazda', 'MAZDA2 15S', 2020, 51000, 7700, '', 'In stock'),
+    ('Mazda', 'MAZDA2 15S', 2019, 85000, 6050, '', 'In stock'),
+    ('Mazda', 'Axela 15S', 2018, 34000, 9900, '', 'In stock'),
+    ('Mazda', 'Atenza Wagon XD', 2018, 54000, 12850, 'Diesel', 'In stock'),
+    ('Nissan', 'AD Van VE', 2021, 55000, 6150, '', 'In stock'),
+    ('Lexus', 'Lbx relax', 2024, 19000, 30000, 'Hybrid', 'In stock'),
+    ('Lexus', 'RX 2.0 300', 2021, 30000, 26350, '', 'In stock'),
+    ('Lexus', 'RX F sport performance', 2023, 11000, 50450, 'Hybrid', 'In stock'),
+    ('Mazda', 'MAZDA2 15SL package', 2020, 38000, 8950, '', 'In stock'),
+    ('Mazda', 'Axela 15S', 2018, 44000, 9850, '', 'In stock'),
+    ('Lexus', 'IS IS300H', 2025, 6000, 32800, 'Hybrid', 'In stock'),
+    ('Mazda', 'CX 5 XD Sports Appearance', 2022, 66000, 12400, 'Light Oil', 'In stock'),
+    ('Honda', 'N Box L turbo', 2022, 39000, 8500, '', 'In stock'),
+    ('Toyota', 'Corolla Cross Z', 2024, 23000, 14100, '', 'In stock'),
+    ('Honda', 'Vezel e:HEV Z', 2025, 24000, 16500, 'Hybrid', 'In stock'),
+    ('Honda', 'N Box L', 2022, 6000, 7200, '', 'In stock'),
+    ('Toyota', 'RAV4 Adventurer', 2023, 24000, 18200, '', 'In stock'),
+    ('Mitsubishi', 'Delica Mini T', 2024, 11000, 9500, 'Hybrid', 'In stock'),
+    ('Mazda', 'CX 5 20S Proactive', 2018, 49000, 9100, '', 'In stock'),
+    ('Honda', 'Fit e:HEV home', 2022, 42000, 7900, 'Hybrid', 'In stock'),
+    ('Honda', 'N Box G L package', 2015, 91000, 2800, '', 'In stock'),
+    ('Nissan', 'Note S', 2021, 46000, 5600, 'Hybrid', 'In stock'),
+    ('Honda', 'Fit 13G F package', 2014, 60000, 2300, '', 'In stock'),
+    ('Nissan', 'Note X', 2021, 19000, 9500, 'Hybrid', 'In stock'),
+    ('Mazda', 'Demio 13S Touring', 2018, 49000, 4400, '', 'In stock'),
+    ('Mitsubishi', 'Delica D5 P', 2024, 17000, 20500, 'Light Oil', 'In stock'),
+    ('Nissan', 'Dayz Highway Star X', 2020, 2000, 5000, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 Hybrid G', 2019, 20000, 15800, 'Hybrid', 'In stock'),
+    ('Nissan', 'Note e-power X', 2019, 69000, 4100, 'Hybrid', 'In stock'),
+    ('Nissan', 'Note e-power X', 2018, 117000, 2800, 'Hybrid', 'In stock'),
+    ('Toyota', 'Aqua S style black', 2019, 102000, 4300, 'Hybrid', 'In stock'),
+    ('Honda', 'N Box G L Hondasensing', 2019, 34000, 5600, '', 'In stock'),
+    ('Lexus', 'RX RX200t version L', 2015, 158000, 10900, '', 'In stock'),
+    ('Toyota', 'Prado TX L package', 2017, 109000, 17800, 'Light Oil', 'In stock'),
+    ('Lexus', 'ES ES300h version L', 2019, 87000, 13900, '', 'In stock'),
+    ('Lexus', 'NX NX350h F sports', 2023, 56000, 26700, '', 'In stock'),
+    ('Lexus', 'CT CT200h version C', 2016, 62000, 6800, '', 'In stock'),
+    ('Lexus', 'NX NX300h urban style', 2017, 66000, 14300, '', 'In stock'),
+    ('Lexus', 'UX UX200 F sports', 2018, 33000, 14300, '', 'In stock'),
+    ('Honda', 'Vezel Hybrid e:HEV Z', 2024, 8000, 16700, '', 'In stock'),
+    ('Nissan', 'X Trail 20X hybrid emergen', 2016, 138000, 4200, '', 'In stock'),
+    ('Lexus', 'CT CT200h version C', 2017, 51000, 9500, '', 'In stock'),
+    ('Honda', 'Freed G Honda sensing', 2017, 108000, 5600, '', 'In stock'),
+    ('Lexus', 'RX RX500h', 2024, 50000, 35700, 'Hybrid', 'In stock'),
+    ('Lexus', 'NX NX350h F sports', 2022, 62000, 24800, 'Hybrid', 'In stock'),
+    ('Honda', 'Fit 13G', 2014, 42000, 3200, '', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL Dark Prime II', 2026, 2000, 23500, '', 'In stock'),
+    ('Toyota', 'Hiace Van Super GL Dark Prime II', 2021, 42000, 20200, 'Light Oil', 'In stock'),
+    ('Honda', 'N Box SS package', 2017, 128000, 1800, '', 'In stock'),
+    ('Honda', 'Stepwgn e:HEV Spada G EX Honta', 2021, 119000, 8800, 'Hybrid', 'In stock'),
+    ('Nissan', 'Note Medalist', 2016, 39000, 2700, '', 'In stock'),
+    ('Toyota', 'Aqua G', 2016, 101000, 2400, 'Hybrid', 'In stock'),
+    ('Mazda', 'CX 3 XD Touring', 2016, 121000, 3500, 'Light Oil', 'In stock'),
+    ('Honda', 'N Box G L Hondasensing', 2018, 40000, 5800, '', 'In stock'),
+    ('Nissan', 'Dayz Roox Highway Star X', 2019, 29000, 5300, '', 'In stock'),
+    ('Honda', 'Stepwgn Spada', 2024, 54000, 18800, '', 'In stock'),
+    ('Honda', 'N Box Base grade', 2025, 13000, 8700, '', 'In stock'),
+    ('Toyota', 'Prado TX L package 70th Aniva', 2022, 26000, 25000, '', 'In stock'),
+    ('Honda', 'N Box G L Hondasensing', 2017, 61000, 4400, '', 'In stock'),
+    ('Mazda', 'CX 8 XD black tone edition', 2021, 55000, 11600, 'Light Oil', 'In stock'),
+    ('Mazda', 'CX 3 XD L package', 2018, 76000, 5600, 'Light Oil', 'In stock'),
+    ('Toyota', "Aqua G G's", 2016, 80000, 4800, 'Hybrid', 'In stock'),
+    ('Mitsubishi', 'Delica D5 2.2 P diesel turbo 4W', 2026, None, 34700, 'Light Oil', 'In stock'),
+    ('Mitsubishi', 'Delica D5 2.2 P diesel turbo 4W', 2019, 23000, 22400, 'Light Oil', 'In stock'),
+    ('Lexus', 'CT 200h version C', 2017, 58000, 11500, 'Hybrid', 'In stock'),
+    ('Toyota', 'Aqua X-urban', 2015, 135000, 2700, '', 'In stock'),
+    ('Honda', 'Vezel e:HEV', 2026, None, 20600, '', 'In stock'),
+    ('Honda', 'N Box L turbo', 2021, 20000, 7900, '', 'In stock'),
+    ('Honda', 'Freed G', 2024, 18000, 12600, '', 'In stock'),
+    ('Toyota', 'RAV4 adventure', 2023, 32000, 25000, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 G', 2020, 58000, 14400, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 adventure', 2019, 74000, 16450, '', 'In stock'),
+    ('Toyota', 'RAV4 G', 2023, 21000, 24650, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 adventure', 2024, 37000, 25650, 'Hybrid', 'In stock'),
+    ('Subaru', 'Impreza Wagon 1.6i-L Eyesight S', 2018, 79000, 6050, '', 'In stock'),
+    ('Subaru', 'Impreza Wagon 1.6i-S Eyesight', 2020, 50000, 9300, '', 'In stock'),
+    ('Toyota', '86 RZ', 2024, 34000, 23650, '', 'In stock'),
+    ('Toyota', '86 GT Limited', 2019, 32000, 14800, '', 'In stock'),
+    ('Subaru', 'XV 2.0i-L Eyesight', 2019, 58000, 9650, '', 'In stock'),
+    ('Toyota', 'RAV4 adventure', 2024, 31000, 25000, 'Hybrid', 'In stock'),
+    ('Subaru', 'Impreza Wagon 2.0i-L Eyesight', 2018, 62000, 5850, '', 'In stock'),
+    ('Subaru', 'XV advance', 2021, 52000, 13300, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 G', 2023, 19000, 25350, 'Hybrid', 'In stock'),
+    ('Toyota', 'RAV4 adventure', 2021, 44000, 17500, '', 'In stock'),
+    ('Subaru', 'XV 2.0i-L Eyesight', 2018, 20000, 12150, '', 'In stock'),
+    ('Toyota', '86 RZ', 2022, 18000, 25350, '', 'In stock'),
 ]
 
 # Sample import rules. These are simple demo rules, not legal advice.
 # Import age limits from the website import page (afriditrading.com/import).
 # 0 means no age limit on that page. These are simple demo rules,
 # not legal advice — the full guide is on the website.
+# Real import rules from afriditrading.com/import and the country pages (Nov 2026). 0 means no age limit, None means the website does not state an age limit. These are simple demo rules, not legal advice — the full guide is on the website.
 SAMPLE_RULES = [
-    ("Jamaica", 5, "Ask us for the full guide."),
-    ("Trinidad and Tobago", 5, "Ask us for the full guide."),
-    ("Ghana", 10, "Ask us for the full guide."),
-    ("Kenya", 8, "Ask us for the full guide."),
-    ("Antigua and Barbuda", 0, "Ask us for the full guide."),
-    ("Nigeria", 15, "Ask us for the full guide."),
-    ("Uganda", 15, "Ask us for the full guide."),
-    ("Namibia", 12, "Ask us for the full guide."),
-    ("Pakistan", 3, "Ask us for the full guide."),
-    ("Bangladesh", 4, "Ask us for the full guide."),
-    ("India", 3, "Ask us for the full guide."),
-    ("Mauritius", 4, "Ask us for the full guide."),
-    ("Egypt", 1, "Ask us for the full guide."),
-    ("Angola", 5, "Ask us for the full guide."),
-    ("South Africa", 0, "No age restriction. Ask us for the full guide."),
-    ("Tanzania", 0, "Ask us for the full guide."),
-    ("Zambia", 0, "Ask us for the full guide."),
+    ('Afghanistan', 0, 'Shipping: 16–26 Days (RoRo). Sailings: Monthly. Inspection: No Inspection Required. Line: ECL / NYK. Not stated on page: port.'),
+    ('Angola', 5, 'Port: Luanda. Shipping: 24–36 Days (RoRo). Sailings: Monthly (RoRo). Inspection: PSI. Line: Waitara. Page states min. manufacturing year 2021.'),
+    ('Antigua and Barbuda', 0, 'Port: Saint Johns. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Not stated on page: shipping line.'),
+    ('Armenia', 0, 'Shipping: 34-46 Days. Sailings: Monthly. Line: MAERSK. Not stated on page: port, inspection.'),
+    ('Bahamas', 10, 'Port: Freeport. Shipping: 24–39 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: CNC Japan. Manufacturing year 2016 or later (per page FAQ).'),
+    ('Bahrain', 5, 'Shipping: 22–31 Days. Sailings: Weekly. Manufacturing year 2021 or later (per page FAQ). Not stated on page: port, inspection, shipping line.'),
+    ('Bangladesh', 4, 'Port: Chittagong. Shipping: 19–24 Days (RoRo). Sailings: Monthly. Inspection: JAAI. Manufacturing year 2022 or later (per page FAQ). Not stated on page: shipping line.'),
+    ('Benin', 0, "Port: Cotonou. Shipping: 34-44 Days. Sailings: Monthly (RoRo). Inspection: Required. Shipping line not stated on page (shown as '-')."),
+    ('Bhutan', None, "Page shows no import-rule header fields (site index lists 'See import rules'); no age limit, port, shipping time, inspection or shipping line stated."),
+    ('Botswana', 0, 'Port: Durban. Shipping: 24-34 Days. Sailings: Monthly (RoRo). Inspection: No Inspection. Line: Mediterranean Shipping Company. Landlocked; shipped via Durban, South Africa.'),
+    ('Brunei', 3, 'Port: Muara Harbor. Shipping: 13–20 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: E&W Maritime. Manufacturing year 2023 or later (per page FAQ).'),
+    ('Burkina Faso', 0, 'Port: Koudougou And Ouagadougou. Shipping: 28–36 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: Fesco Lines. Landlocked; destination shown as the inland cities Koudougou and Ouagadougou.'),
+    ('Burundi', 0, 'Port: Mombasa. Shipping: 24-34 Days. Sailings: Monthly (RoRo). Inspection: No Inspection. Line: Keihin, MOL, Hoegh. Landlocked; shipped via Mombasa, Kenya.'),
+    ('China', 10, 'Port: Tianjin Xin Gang. Shipping: 10–15 Days (Container). Sailings: Weekly. Line: COSCO. Manufacturing year 2016 or later (per page FAQ). Not stated on page: inspection.'),
+    ('Comoros', None, "Port: Moroni. Shipping: 28–34 Days (Container). Sailings: Weekly. Age limit, inspection and shipping line not stated on page (all shown as '-')."),
+    ('Cote Divoire', 5, "Port: Abidjan. Shipping: 34–46 Days (RoRo). Sailings: 34-46 Days. Line: OMA Côte d'Ivoire. Inspection not stated on page (shown as '-'); vessel schedule field on the page literally shows '34-46 Days' rather than a frequency; min. manufacturing year 2021."),
+    ('Dominican Republic', 10, 'Port: Santo Domingo. Shipping: 24–36 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Manufacturing year 2016 or later (per page FAQ). Not stated on page: shipping line.'),
+    ('Egypt', 1, 'Port: Al Iskandariyh (Alexandria). Shipping: 21–28 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: United Arab Shipping Agencies. Page states min. manufacturing year 2025.'),
+    ('Equatorial Guinea', 10, "Shipping: 34-44 Days. Sailings: Monthly. Inspection: Fiche de Demande d’Inspection. Destination port not stated on page; shipping line not stated (shown as '-'); min. manufacturing year 2016."),
+    ('Ethiopia', 0, "Port: Djibouti. Shipping: 21–30 Days (Container). Sailings: Weekly. Inspection: No Inspection. Landlocked; shipped via Djibouti; shipping line not stated on page (shown as '-')."),
+    ('Gabon', 3, "Port: Libreville. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: PROGEC. Shipping line not stated on page (shown as '-'); min. manufacturing year 2023."),
+    ('Gambia', 8, "Port: Banjul. Shipping: 26–34 Days (Container). Sailings: Weekly. Inspection: ASYCUDA. Shipping line not stated on page (shown as '-'); min. manufacturing year 2018."),
+    ('Georgia', 0, 'Port: Poti. Shipping: 34–46 Days (Container). Sailings: Monthly. Inspection: No Inspection. Line: MAERSK / CMA CGM.'),
+    ('Ghana', 10, 'Port: Tema. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: PVoC. Line: Apex Shipping. Verified against known data; matches (max 10 years, TEMA, 34-44 days RoRo, monthly, PVoC, Apex Shipping); min. manufacturing year 2016.'),
+    ('Grenada', 0, 'Port: Saint George. Shipping: 24–39 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Not stated on page: shipping line.'),
+    ('Guyana', 8, 'Port: Georgetown. Shipping: 24–34 Days (RoRo). Sailings: Less Than Bi-Monthly (RoRo). Inspection: ATJ Inspection. Line: Yuwa, Hoegh, MOL. Manufacturing year 2018 or later (per page FAQ).'),
+    ('Hong Kong', 7, 'Port: Hong Kong. Shipping: 9–14 Days (RoRo). Sailings: Fortnightly. Inspection: No Inspection. Line: ZIM / OOCL. Manufacturing year 2019 or later (per page FAQ).'),
+    ('India', 3, 'Port: Chennai (Madras). Shipping: 19–24 Days (RoRo). Sailings: Monthly. Inspection: Roadworthiness. Line: Naval Docks. Manufacturing year 2023 or later (per page FAQ).'),
+    ('Indonesia', None, 'Port: Tanjung Benete. Shipping: 11–23 Days (RoRo). Sailings: Monthly. Not stated on page: year restriction, inspection, shipping line.'),
+    ('Iran', 3, 'Port: Bandar Abbas. Shipping: 29–38 Days (RoRo). Sailings: Bi-Monthly. Manufacturing year 2023 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
+    ('Iraq', 2, 'Port: Umm Qasr. Shipping: 29–34 Days (Container). Sailings: Weekly. Manufacturing year 2024 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
+    ('Jamaica', 6, 'Port: Kingston. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: Pre-Shipment Inspection. Line: CNC Japan. Manufacturing year 2020 or later (per page FAQ).'),
+    ('Jordan', 10, 'Port: Al Aqabah. Shipping: 24–33 Days (Container). Sailings: Weekly. Manufacturing year 2016 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
+    ('Kazakhstan', 5, 'Shipping: 24–26 Days (Container). Sailings: Weekly. Manufacturing year 2021 or later (per page FAQ). Not stated on page: port, inspection, shipping line.'),
+    ('Kyrgyzstan', 10, 'Port: Bishkek. Shipping: 34–36 Days (Container). Sailings: Weekly. Inspection: No Inspection. Manufacturing year 2016 or later (per page FAQ). Not stated on page: shipping line.'),
+    ('Laos', 0, 'Port: Port of Laos. Inspection: No Inspection. Not stated on page: shipping time, vessel schedule, shipping line.'),
+    ('Lebanon', 8, 'Port: Bayrut. Shipping: 34–46 Days (Container). Sailings: Monthly. Manufacturing year 2018 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
+    ('Lesotho', 0, 'Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: K Line. Destination port not stated on page (landlocked; no port named).'),
+    ('Liberia', 10, 'Port: Monrovia. Shipping: 39–49 Days (RoRo). Sailings: Monthly. Inspection: BIVAC. Line: Umarco Shipping. Min. manufacturing year 2016.'),
+    ('Libya', 5, "Port: Mina Tarabulus (Tripoli). Shipping: 29–40 Days (Container). Sailings: Weekly. No inspection field or inspection FAQ on the page; shipping line not stated (shown as '-'); min. manufacturing year 2021."),
+    ('Macau', None, 'Port: Macau. Shipping: 7–10 Days (Container). Sailings: Weekly. Not stated on page: year restriction, inspection, shipping line.'),
+    ('Madagascar', None, "Port: Tamatave. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: BSC / CTN. Age limit not stated on page (shown as '-'); shipping line not stated (shown as '-')."),
+    ('Malawi', 0, "Port: Dar Es Salaam. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Landlocked; shipped via Dar es Salaam, Tanzania; shipping line not stated on page (shown as '-')."),
+    ('Malaysia', 5, 'Port: Penang. Shipping: 9–13 Days (Container). Sailings: Weekly. Manufacturing year 2021 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
+    ('Maldives', 0, 'Port: Male. Shipping: 21–30 Days. Sailings: Weekly. Inspection: No Inspection. Line: Asia Forwarding.'),
+    ('Mauritania', 8, "Port: Nouakchott. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Shipping line not stated on page (shown as '-'); min. manufacturing year 2018."),
+    ('Mauritius', 4, 'Port: Port Louis. Shipping: 19–24 Days (RoRo). Sailings: Monthly. Inspection: JEVIC / JAAI. Line: PAS Mauritius. Min. manufacturing year 2022.'),
+    ('Mongolia', 0, 'Port: Ulaanbaatar. Shipping: 13–20 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: Shipping Line Mongolia.'),
+    ('Mozambique', 0, "Port: Maputo. Shipping: 29–34 Days (RoRo). Sailings: Monthly. Inspection: Intertek. Shipping line not stated on page (shown as '-')."),
+    ('Myanmar', 5, 'Port: Yangon. Shipping: 13–22 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: S.R Shipping Myanmar. Manufacturing year 2021 or later (per page FAQ).'),
+    ('Namibia', 12, 'Port: Walvis Bay. Shipping: 29–36 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: Manica Group. Min. manufacturing year 2014.'),
+    ('Nigeria', 15, 'Port: Lagos. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: 3MO Shipping. Min. manufacturing year 2011.'),
+    ('Oman', 10, 'Port: Muscat. Shipping: 29–34 Days. Sailings: Less Than Bi-Monthly. Manufacturing year 2016 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
+    ('Pakistan', 3, 'Port: Karachi. Shipping: 14–24 Days (RoRo). Sailings: Monthly. Inspection: Not Required. Line: Al-Hamd International. Manufacturing year 2023 or later (per page FAQ).'),
+    ('Philippines', 0, 'Port: Manila. Shipping: 5–8 Days (Container). Sailings: Weekly. Inspection: PIA. Not stated on page: shipping line.'),
+    ('Qatar', 5, 'Port: Doha. Shipping: 20–29 Days (Container). Sailings: Weekly. Inspection: Fahes. Manufacturing year 2021 or later (per page FAQ). Not stated on page: shipping line.'),
+    ('Rwanda', 0, 'Port: Mombasa. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: Hyundai Glovis. Landlocked; shipped via Mombasa, Kenya.'),
+    ('Saudi Arabia', 5, 'Port: Dammam. Shipping: 34–46 Days (Container). Sailings: Bi-Monthly. Inspection: No Inspection. Manufacturing year 2021 or later (per page FAQ). Not stated on page: shipping line.'),
+    ('Senegal', 8, 'Port: Dakar. Shipping: 34–44 Days (RoRo). Sailings: Monthly. No inspection or shipping line field on the page; min. manufacturing year 2018.'),
+    ('Seychelles', 3, 'Port: Victoria. Shipping: 28–39 Days (Container). Sailings: Monthly. No inspection or shipping line field on the page; min. manufacturing year 2023.'),
+    ('Sierra Leone', 0, 'Port: Freetown. Shipping: 34–45 Days (Container). Sailings: Weekly. Inspection: No Inspection. Shipping line not stated on the page.'),
+    ('Singapore', 3, 'Port: Keppel (East Singapore). Shipping: RoRo (09-14 Days). Sailings: Fortnightly. Inspection: No Inspection. Line: Samudera Shipping Line Pte Ltd.. Manufacturing year 2023 or later (per page FAQ).'),
+    ('Somalia', None, "Port: Berbera. Shipping: 36–46 Days (Container). Sailings: Weekly. No age restriction stated on the page (import index says 'See import rules'); no inspection or shipping line field on the page."),
+    ('South Africa', 0, 'Port: Durban. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: Keihin.'),
+    ('South Korea', 0, 'Port: Busan. Shipping: 20–30 Days (RoRo). Sailings: Weekly. Inspection: No Inspection. Line: Hyundai Merchant Marine.'),
+    ('South Sudan', 0, 'Port: Mombasa. Shipping: 24–36 Days (RoRo). Sailings: Monthly. Inspection: EAA. Line: Hyundai Glovis. Landlocked; shipped via Mombasa, Kenya.'),
+    ('Sri Lanka', 3, 'Port: Colombo. Shipping: 14–24 Days (RoRo). Sailings: Fortnightly. Inspection: JAAI. Line: K-Line / MOL. Manufacturing year 2023 or later (per page FAQ).'),
+    ('Taiwan', 10, 'Port: Keelung. Shipping: 5–9 Days. Line: ZIM. Manufacturing year 2016 or later (per page FAQ). Not stated on page: vessel schedule, inspection.'),
+    ('Tanzania', 0, 'No age limit, from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
+    ('Thailand', 0, 'Port: Bangkok. Shipping: 14–19 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: Thailand Star Shipping.'),
+    ('Togo', 0, 'No age limit, from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
+    ('Trinidad and Tobago', 4, 'Port: Port of Spain. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: CNC Japan. Manufacturing year 2022 or later (per page FAQ).'),
+    ('Turkey', 0, 'Port: Istanbul. Shipping: 29-36 Days. Sailings: Monthly. Inspection: TÜVTURK. Line: ZIM Integrated Shipping Services Ltd.'),
+    ('Uganda', 15, 'Age limit from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
+    ('Vietnam', 5, 'Port: Ho Chi Minh City. Shipping: 10–17 Days (Container). Sailings: Weekly. Line: Ben Line Agencies. Manufacturing year 2021 or later (per page FAQ). Not stated on page: inspection.'),
+    ('Zambia', 0, 'No age limit, from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
+    ('Zimbabwe', 10, 'Age limit from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
 ]
 
 
@@ -313,6 +686,11 @@ def init_db():
     cols = [r[1] for r in db.execute("PRAGMA table_info(users)")]
     if "password_hash" not in cols:
         db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    # Add a reference column to cars (e.g. AA35371 from the website).
+    # The daily sync script uses it to match cars safely.
+    car_cols = [r[1] for r in db.execute("PRAGMA table_info(cars)")]
+    if "ref" not in car_cols:
+        db.execute("ALTER TABLE cars ADD COLUMN ref TEXT")
     # Add sample cars only the first time, when the table is empty.
     count = db.execute("SELECT COUNT(*) FROM cars").fetchone()[0]
     if count == 0:
@@ -377,7 +755,56 @@ def delivered_price(car, country):
 # or grade it has not checked, never takes money, never changes a price,
 # and sends hard questions to a human. Handover: every chat is saved in
 # the database with its messages, so the admin can read it and take over.
-def bot_reply(text, chat_id):
+# ---------- email an unanswered question to the team ----------
+
+# Every unanswered question is emailed to BOTH of these addresses.
+INQUIRY_EMAILS = ["csd@afriditrading.com", "sales@afriditrading.com"]
+
+
+def send_inquiry_email(name, email, question):
+    """Email one unanswered question to the Afridi Trading team.
+
+    SMTP settings come ONLY from environment variables (SMTP_HOST,
+    SMTP_PORT, SMTP_USER, SMTP_PASS) — never from code. If they are
+    not set, the email is skipped and the inquiry stays in the
+    database and the admin panel. This never crashes the bot:
+    any email problem is only logged.
+    """
+    host = os.environ.get("SMTP_HOST")
+    user = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASS")
+    if not host or not user or not password:
+        print("EMAIL SKIPPED: SMTP settings are not set, so no email "
+              "was sent for this inquiry. It is saved in the database.")
+        return False
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    message = EmailMessage()
+    message["From"] = user
+    message["To"] = ", ".join(INQUIRY_EMAILS)
+    message["Subject"] = "New unanswered question - Afridi Trading Bot"
+    message.set_content(
+        "A customer asked the bot a question it could not answer.\n\n"
+        f"Customer: {name}\n"
+        f"Email: {email}\n"
+        f"Date and time (UTC): {datetime.now().isoformat()}\n\n"
+        f"Question:\n{question}\n\n"
+        "Please reply to the customer. You can also answer it in the "
+        "admin panel, and the bot will learn the answer.")
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(message)
+        print("EMAIL SENT: inquiry emailed to "
+              f"{', '.join(INQUIRY_EMAILS)}.")
+        return True
+    except Exception as exc:  # noqa: BLE001 - email must never crash chat
+        print(f"EMAIL FAILED: could not send inquiry email: {exc}. "
+              "The inquiry is saved in the database.")
+        return False
+
+
+def bot_reply(text, chat_id, user_id=None):
     """Answer one buyer question. Rule-based: keyword matching only."""
     msg = text.lower().strip()
     db = get_db()
@@ -393,6 +820,24 @@ def bot_reply(text, chat_id):
                        None)
             if row is not None:
                 return row["answer"]
+    # Also check every FAQ in the table, including ones the admin added
+    # by hand or by answering an unanswered question. Simple word match:
+    # if the customer's question shares 2 or more real words with a
+    # saved question (or contains it), use that saved answer. Small
+    # words like "do", "you", "the" do not count.
+    stop = {"do", "you", "the", "a", "an", "is", "are", "can", "i",
+            "how", "what", "does", "did", "to", "for", "me", "my",
+            "please", "with", "of", "in", "on", "it", "if", "so",
+            "your", "our", "we", "us", "and", "or", "am"}
+    msg_words = set(re.findall(r"[a-z0-9]+", msg)) - stop
+    for f in faqs:
+        q_words = set(re.findall(r"[a-z0-9]+",
+                                 f["question"].lower())) - stop
+        if f["question"].lower() in msg or msg in f["question"].lower():
+            return f["answer"]
+        overlap = msg_words & q_words
+        if len(overlap) >= 2 and len(overlap) * 2 >= len(q_words):
+            return f["answer"]
 
     # 1. Track a shipment: "track ATJ-1001"
     found = re.search(r"atj-?\d+", msg)
@@ -544,21 +989,41 @@ def bot_reply(text, chat_id):
                 f"{c['model']} {c['year']} (${c['price_fob']})" for c in rows)
             return f"{make.title()} cars in stock: {names}."
 
-    # 7. Import rules for a country.
-    rules = cached_list("rules",
-                        "SELECT * FROM import_rules")
-    for country in ("jamaica", "trinidad", "ghana", "kenya", "antigua",
-                    "nigeria", "uganda", "namibia", "pakistan", "bangladesh",
-                    "india", "mauritius", "egypt", "angola", "south africa",
-                    "tanzania", "zambia"):
-        if country in msg:
-            row = next((r for r in rules
-                        if country in r["country"].lower()), None)
-            if row:
-                age = (f"up to {row['max_car_age_years']} years old"
-                       if row["max_car_age_years"] else "no age limit")
-                return (f"Import rules for {row['country']}: cars {age}. "
-                        f"{row['notes']}")
+    # 7. Import rules for a country. Works for every country in
+    # the import_rules table, not just a short list. First try the
+    # full country name ("south africa"), then a single word that
+    # belongs to only one country ("trinidad", "jamaica"). Words like
+    # "south" are shared by several countries, so they need the full
+    # name. Age 0 means no age limit; age None means the website does
+    # not state an age limit.
+    if "import" in msg or "rule" in msg:
+        rules = cached_list("rules", "SELECT * FROM import_rules")
+        first_words = {}
+        for r in rules:
+            w = r["country"].lower().split()[0]
+            first_words.setdefault(w, []).append(r)
+        found = None
+        for r in rules:
+            if r["country"].lower() in msg:
+                found = r
+                break
+        if found is None:
+            for word in re.findall(r"[a-z]+", msg):
+                hit = first_words.get(word, [])
+                if len(hit) == 1 and word not in ("south", "saint"):
+                    found = hit[0]
+                    break
+        if found:
+            age = found["max_car_age_years"]
+            if age is None:
+                age_text = ("the website does not state an age limit "
+                            "for this country — ask our team")
+            elif age == 0:
+                age_text = "no age limit"
+            else:
+                age_text = f"up to {age} years old"
+            return (f"Import rules for {found['country']}: cars "
+                    f"{age_text}. {found['notes']}")
 
     # 7b. How to buy, auction, prices, stock, inspection.
     # Facts from the website How to Buy, FAQs and import pages.
@@ -635,11 +1100,22 @@ def bot_reply(text, chat_id):
                 "9 to 6, Saturday 9 to 4, Japan time. I am here day and "
                 "night.")
 
-    # 10. I do not know: save the question for a human.
+    # 10. I do not know: save the question for a human, as an
+    # open inquiry with the customer who asked it (None = guest).
     db.execute(
         "INSERT INTO inquiries (user_id, car_id, question, status)"
-        " VALUES (1, NULL, ?, 'Open')", (text,))
+        " VALUES (?, NULL, ?, 'open')", (user_id, text))
     db.commit()
+    # Also email it to the team at once, so they can reply. If email
+    # is not set up, this only logs a message and the inquiry still
+    # waits in the admin panel.
+    name, email = "Guest", "not given"
+    if user_id is not None:
+        who = db.execute("SELECT name, email FROM users WHERE id = ?",
+                         (user_id,)).fetchone()
+        if who is not None:
+            name, email = who["name"], who["email"]
+    send_inquiry_email(name, email, text)
     return ("I do not know that yet. I saved your question for our team, "
             "and a human will reply. You can also ask me about a car, "
             "a price, a grade, shipping, or import rules.")
@@ -794,8 +1270,9 @@ def admin():
     messages = db.execute(
         "SELECT * FROM messages ORDER BY id DESC LIMIT 50").fetchall()
     questions = db.execute(
-        "SELECT * FROM inquiries WHERE status = 'Open'"
-        " ORDER BY id DESC").fetchall()
+        "SELECT i.*, u.name AS user_name, u.email AS user_email"
+        " FROM inquiries i LEFT JOIN users u ON u.id = i.user_id"
+        " WHERE i.status = 'open' ORDER BY i.id DESC").fetchall()
     faqs = db.execute("SELECT * FROM faqs ORDER BY id").fetchall()
     cars = db.execute("SELECT * FROM cars").fetchall()
     invoices = db.execute("SELECT * FROM invoices").fetchall()
@@ -809,6 +1286,33 @@ def admin():
         counts=counts, users=users, chats=chats, messages=messages,
         questions=questions, faqs=faqs, cars=cars, invoices=invoices,
         ships=ships)
+
+
+@app.route("/admin/inquiry/answer/<int:inquiry_id>", methods=["POST"])
+def admin_inquiry_answer(inquiry_id):
+    """Admin answers an unanswered question. Two things happen:
+    (1) the inquiry is marked 'answered', (2) the question + answer
+    are added to the faqs table as a new chunk of knowledge, so the
+    next customer who asks the same question gets the answer at once.
+    The FAQ cache is cleared so the new answer works immediately."""
+    user = current_user()
+    if not is_admin(user):
+        return redirect(url_for("sign_in"))
+    answer = request.form.get("answer", "").strip()
+    topic = request.form.get("topic", "").strip() or "general"
+    if answer:
+        db = get_db()
+        inquiry = db.execute(
+            "SELECT * FROM inquiries WHERE id = ?", (inquiry_id,)).fetchone()
+        if inquiry is not None:
+            db.execute("INSERT INTO faqs (question, answer, topic)"
+                       " VALUES (?, ?, ?)",
+                       (inquiry["question"], answer, topic))
+            db.execute("UPDATE inquiries SET status = 'answered'"
+                       " WHERE id = ?", (inquiry_id,))
+            db.commit()
+            _CACHE.pop("faqs", None)
+    return redirect(url_for("admin"))
 
 
 @app.route("/admin/faq/add", methods=["POST"])
@@ -910,7 +1414,7 @@ def api_chat():
     # Only signed-in users get their chat history saved.
     user = current_user()
     if user is None:
-        return jsonify({"reply": bot_reply(text, None)})
+        return jsonify({"reply": bot_reply(text, None, None)})
     db = get_db()
     chat = db.execute(
         "SELECT id FROM chats WHERE user_id = ? AND status = 'Open'"
@@ -926,7 +1430,7 @@ def api_chat():
     now = datetime.now().isoformat()
     db.execute("INSERT INTO messages (chat_id, sender, text, created_at)"
                " VALUES (?, 'buyer', ?, ?)", (chat["id"], text, now))
-    reply = bot_reply(text, chat["id"])
+    reply = bot_reply(text, chat["id"], user["id"])
     db.execute("INSERT INTO messages (chat_id, sender, text, created_at)"
                " VALUES (?, 'bot', ?, ?)", (chat["id"], reply, now))
     db.commit()
