@@ -875,10 +875,23 @@ def find_car(text):
     for car in sort_cars_by_grade(cars):
         model = car["model"].lower()
         # "Aqua S" matches "aqua"; "Corolla Axio" matches "axio".
+        # Small filler words ("the", "first", "edition") are
+        # skipped: they sit in many model names and would match
+        # almost any question, so they must never pick the car.
+        # Without this, grade order alone could pick a wrong car
+        # whose model name happens to hold one of those words.
         words = model.replace("corolla ", "").split()
-        if any(w in text for w in words if len(w) > 2):
+        if any(w in text for w in words
+               if len(w) > 2 and w not in _MODEL_STOPWORDS):
             return car
     return None
+
+
+# Filler words that sit inside model names but never identify
+# a car on their own — see find_car above.
+_MODEL_STOPWORDS = {"the", "and", "for", "with", "from", "first",
+                    "edition", "package", "type", "grade", "new",
+                    "old", "special", "limited"}
 
 
 def delivered_price(car, country):
