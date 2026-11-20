@@ -268,7 +268,7 @@ class SupaDB:
             # Only used for the crawl queue: count rows by status.
             m = re.match(r"select (.+) from (\w+) group by (\w+)",
                          text, re.I)
-            rows = self.client.table(m.group(2)).select("*").execute().data
+            rows = _select_all(self.client, m.group(2), "*")
             counts = {}
             for r in rows:
                 counts[r[m.group(3)]] = counts.get(r[m.group(3)], 0) + 1
@@ -298,8 +298,18 @@ class SupaDB:
         if order_col:
             q = q.order(order_col, desc=order_desc)
         if limit is not None:
-            q = q.limit(limit)
-        return q.execute().data
+            return q.limit(limit).execute().data
+        # No LIMIT: fetch every row, 1000 at a time. PostgREST
+        # returns at most 1000 rows in one call, so one call
+        # would silently drop the rest of the cars.
+        rows, start = [], 0
+        while True:
+            page = q.range(start, start + 999).execute().data
+            rows.extend(page)
+            if len(page) < 1000:
+                break
+            start += 1000
+        return rows
 
     def _where(self, q, where, params):
         """Add WHERE parts to a Supabase query. Each ? uses the
@@ -346,13 +356,17 @@ class SupaDB:
             limit = int(m.group(1))
         if "count(m.id)" in low:
             # My chats: each chat with how many messages it has.
-            chats = self.client.table("chats").select("*").eq(
-                "user_id", params[0]).order("id", desc=True).execute().data
+            chats = _select_all(
+                self.client, "chats", "*",
+                self.client.table("chats").select("*").eq(
+                    "user_id", params[0]).order("id", desc=True))
             if not chats:
                 return []
             ids = [c["id"] for c in chats]
-            msgs = self.client.table("messages").select("chat_id").in_(
-                "chat_id", ids).execute().data
+            msgs = _select_all(
+                self.client, "messages", "chat_id",
+                self.client.table("messages").select("chat_id").in_(
+                    "chat_id", ids))
             counts = {}
             for msg in msgs:
                 counts[msg["chat_id"]] = counts.get(msg["chat_id"], 0) + 1
@@ -364,16 +378,18 @@ class SupaDB:
             if limit is not None:
                 q = q.limit(limit)
             chats = q.execute().data
-            users = {u["id"]: u for u in self.client.table("users").select(
-                "id,name").execute().data}
+            users = {u["id"]: u for u in _select_all(
+                self.client, "users", "id,name")}
             return [{**c, "user_name": users.get(
                 c.get("user_id"), {}).get("name")} for c in chats]
         if "from inquiries i" in low:
             # Admin: open questions with the buyer's name and email.
-            rows = self.client.table("inquiries").select("*").eq(
-                "status", "open").order("id", desc=True).execute().data
-            users = {u["id"]: u for u in self.client.table("users").select(
-                "id,name,email").execute().data}
+            rows = _select_all(
+                self.client, "inquiries", "*",
+                self.client.table("inquiries").select("*").eq(
+                    "status", "open").order("id", desc=True))
+            users = {u["id"]: u for u in _select_all(
+                self.client, "users", "id,name,email")}
             return [{**r,
                      "user_name": users.get(
                          r.get("user_id"), {}).get("name"),
@@ -480,6 +496,24 @@ def _chunks(rows, size=100):
         yield rows[start:start + size]
 
 
+def _select_all(client, table, cols, base=None):
+    """Fetch every row from a Supabase table, 1000 at a time.
+    PostgREST returns at most 1000 rows in one call, so a single
+    call would silently miss the rest — and the seed check would
+    then add the missing cars a second time. Small tables finish
+    in one call. `base` is an already-filtered query to page
+    through instead of a plain table read."""
+    rows, start = [], 0
+    while True:
+        q = base if base is not None else client.table(table).select(cols)
+        page = q.range(start, start + 999).execute().data
+        rows.extend(page)
+        if len(page) < 1000:
+            break
+        start += 1000
+    return rows
+
+
 def _seed_cars(client, new_cars):
     """Insert new seed cars. If the Supabase cars table does not
     have the new columns yet (ref, auction_grade, image_url,
@@ -508,9 +542,10 @@ def _backfill_car_details(client):
     only fields that are empty — so it does nothing on later
     starts. Skipped quietly if the columns do not exist yet."""
     try:
-        have = client.table("cars").select(
+        have = _select_all(
+            client, "cars",
             "id,make,model,year,price_fob,ref,auction_grade,"
-            "image_url,condition_note").execute().data
+            "image_url,condition_note")
     except Exception:  # noqa: BLE001 - new columns may not exist yet
         return
     by_key = {(r["make"], r["model"], r["year"], r["price_fob"]): r
@@ -543,10 +578,11 @@ def init_supabase():
     (made in the Supabase dashboard). Only adds what is missing,
     so running twice is safe."""
     client = _get_sb_client()
-    # Cars: add the seed cars that are not there yet.
+    # Cars: add the seed cars that are not there yet. Read ALL rows
+    # (see _select_all): one call only returns the first 1000.
     have = {(r["make"], r["model"], r["year"], r["price_fob"])
-            for r in client.table("cars").select(
-                "make,model,year,price_fob").execute().data}
+            for r in _select_all(
+                client, "cars", "make,model,year,price_fob")}
     new_cars = []
     for row in seed_car_rows():
         key = (row[0], row[1], row[2], row[4])

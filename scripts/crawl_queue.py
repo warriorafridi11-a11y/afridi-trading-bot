@@ -163,37 +163,47 @@ def seed_key(car):
             car["distance_km"], car["price_fob"])
 
 
+def part_files(repo):
+    """The seed car part files (seed_cars_a.py, ...), in order."""
+    import glob
+    found = sorted(glob.glob(os.path.join(repo, "seed_cars_*.py")))
+    return found
+
+
 def load_seed_keys(seed_py):
-    """Read the cars already in the seed_data.py seed list."""
+    """Read the cars already in the seed car part files.
+
+    seed_py is seed_data.py; the cars live in seed_cars_*.py
+    next to it. Kept for the old call shape (one path in)."""
+    repo = os.path.dirname(os.path.abspath(seed_py))
     keys = set()
-    try:
-        with open(seed_py, encoding="utf-8") as handle:
-            text = handle.read()
-    except OSError:
-        return keys
-    start = text.find("SAMPLE_CARS = [")
-    if start < 0:
-        return keys
-    end = text.find("\n]\n", start)
-    block = text[start:end] if end > 0 else text[start:]
-    for line in block.splitlines():
-        line = line.strip().strip(",").strip('"')
-        parts = line.split("|")
-        if len(parts) >= 7:
-            try:
-                keys.add((parts[0], parts[1], int(parts[2]),
-                          int(parts[3]) if parts[3] else None,
-                          int(parts[4])))
-            except ValueError:
-                continue
+    for path in part_files(repo):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip().strip(",").strip('"')
+            parts = line.split("|")
+            if len(parts) >= 7:
+                try:
+                    keys.add((parts[0], parts[1], int(parts[2]),
+                              int(parts[3]) if parts[3] else None,
+                              int(parts[4])))
+                except ValueError:
+                    continue
     return keys
 
 
 def append_to_seed(seed_py, cars):
-    """Add new cars to the SAMPLE_CARS list in seed_data.py, so
-    the live bot gets them on the next deploy. New lines carry
-    the ref, auction grade and photo link too. Returns how many
-    were added."""
+    """Add new cars to the last seed car part file, so the live
+    bot gets them on the next deploy. New lines carry the ref,
+    auction grade and photo link too. If the last part file is
+    getting too big to deploy (over 80 KB), a new part file is
+    started and linked into seed_data.py. Returns how many
+    cars were added."""
+    repo = os.path.dirname(os.path.abspath(seed_py))
     keys = load_seed_keys(seed_py)
     new_lines = []
     for car in cars:
@@ -210,16 +220,45 @@ def append_to_seed(seed_py, cars):
         keys.add(seed_key(car))
     if not new_lines:
         return 0
-    with open(seed_py, encoding="utf-8") as handle:
+    parts = part_files(repo)
+    target = parts[-1]
+    if os.path.getsize(target) > 80000:
+        # Start a new part file: next letter after the last one.
+        last = os.path.basename(target)  # e.g. seed_cars_d.py
+        letter = chr(ord(last[len("seed_cars_")]) + 1)
+        name = f"CARS_{letter.upper()}"
+        target = os.path.join(repo, f"seed_cars_{letter}.py")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write('"""One part of the seed car list. Split into '
+                         'small files\nso each file stays small enough to '
+                         'deploy (one upload call\ncannot carry a very big '
+                         'file). New cars go in the last file.\n"""\n\n\n')
+            handle.write(f"{name} = [\n]\n")
+        # Link the new part into seed_data.py.
+        with open(seed_py, encoding="utf-8") as handle:
+            text = handle.read()
+        text = text.replace(
+            "SAMPLE_CARS = ",
+            f"from seed_cars_{letter} import {name}\n"
+            f"SAMPLE_CARS = ", 1)
+        anchor = "SAMPLE_CARS = "
+        start = text.find(anchor)
+        end = text.find("\n", start)
+        line = text[start:end]
+        if name not in line:
+            text = text[:end] + f" + {name}" + text[end:]
+        with open(seed_py, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        print(f"Started a new seed part file: {target}")
+    with open(target, encoding="utf-8") as handle:
         text = handle.read()
-    start = text.find("SAMPLE_CARS = [")
-    end = text.find("\n]\n", start)
-    if start < 0 or end < 0:
-        print("WARNING: could not find SAMPLE_CARS in seed_data.py, so"
-              " the new cars were saved in the database only.")
+    end = text.rfind("\n]\n")
+    if end < 0:
+        print("WARNING: could not find the end of the seed part file,"
+              " so the new cars were saved in the database only.")
         return 0
     text = text[:end] + "\n" + "\n".join(new_lines) + text[end:]
-    with open(seed_py, "w", encoding="utf-8") as handle:
+    with open(target, "w", encoding="utf-8") as handle:
         handle.write(text)
     return len(new_lines)
 

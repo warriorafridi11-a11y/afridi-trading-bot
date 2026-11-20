@@ -265,7 +265,11 @@ cars, chats, messages, inquiries, invoices, shipments, import rules,
 reviews, FAQs and the crawl queue. The first start seeds Supabase
 from the same seed data (1,958 cars, 77 import rules, 20 FAQs) and
 adds the sample shipment ATJ-1001, only adding what is missing.
-When the two settings are not set, the bot uses SQLite, as before.
+All reads fetch every row, 1000 at a time, because PostgREST
+returns at most 1000 rows in one call — without that, cars past
+row 1000 would be invisible and the seed check would add them a
+second time. When the two settings are not set, the bot uses
+SQLite, as before.
 If Supabase is set but the startup test read fails (for example the
 tables do not let the anon role use them yet — run the GRANTs below),
 the bot keeps running on SQLite and says why on `/health`.
