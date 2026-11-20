@@ -815,6 +815,32 @@ def _col(row, name):
         return None
 
 
+# Best grade first. The site lists S and 5 as the best grades,
+# then 6 and 7.5 (rare, high grades), then 4.5, 4, 3.5, 3, and R
+# (repaired) last among graded cars. Cars with no grade at all
+# always go last. Nothing here invents a grade — a car with no
+# grade simply sorts to the end.
+GRADE_ORDER = {"s": 0, "5": 1, "6": 2, "7.5": 2, "4.5": 3,
+               "4": 4, "3.5": 5, "3": 6, "r": 7}
+NO_GRADE_RANK = 99
+
+
+def grade_rank(grade):
+    """Sort number for one auction grade: lower is better.
+    A missing grade, or a grade we do not know, sorts last."""
+    if grade is None:
+        return NO_GRADE_RANK
+    return GRADE_ORDER.get(str(grade).strip().lower(), 98)
+
+
+def sort_cars_by_grade(cars):
+    """Best-grade cars first, then the lowest price first inside
+    the same grade. Works on any list of car rows, from SQLite
+    or Supabase."""
+    return sorted(cars, key=lambda c: (grade_rank(_col(c, "auction_grade")),
+                                       _col(c, "price_fob") or 0))
+
+
 def car_condition_text(car):
     """One short sentence about a car's condition, in simple
     words, using only what the website actually says. The grade
@@ -844,7 +870,9 @@ def car_condition_text(car):
 def find_car(text):
     """Find a car in the question by its model name."""
     cars = cached_list("cars", "SELECT * FROM cars")
-    for car in cars:
+    # Best-grade car first, so "find me an Aqua" shows the best
+    # Aqua, not just the first one in the database.
+    for car in sort_cars_by_grade(cars):
         model = car["model"].lower()
         # "Aqua S" matches "aqua"; "Corolla Axio" matches "axio".
         words = model.replace("corolla ", "").split()
@@ -1086,6 +1114,7 @@ def bot_reply(text, chat_id, user_id=None):
         rows = db.execute(
             "SELECT * FROM cars WHERE price_fob <= ? ORDER BY price_fob",
             (amount,)).fetchall()
+        rows = sort_cars_by_grade(rows)
         if rows:
             names = ", ".join(
                 f"{c['make']} {c['model']} {c['year']} (${c['price_fob']})"
@@ -1118,6 +1147,7 @@ def bot_reply(text, chat_id, user_id=None):
         if make in msg:
             rows = db.execute(
                 "SELECT * FROM cars WHERE LOWER(make) = ?", (make,)).fetchall()
+            rows = sort_cars_by_grade(rows)
             names = ", ".join(
                 f"{c['model']} {c['year']} (${c['price_fob']})" for c in rows)
             return f"{make.title()} cars in stock: {names}."
@@ -1541,6 +1571,11 @@ def cars():
         except (KeyError, IndexError, TypeError):
             return None
     rows = [c for c in rows if _val(c, "image_url")]
+    # Best-grade cars first (S, 5, 6, 7.5, 4.5, 4, 3.5, 3, R),
+    # then lowest price inside the same grade. Cars with no
+    # grade go last. The browser keeps this order when the
+    # user searches, filters or changes pages.
+    rows = sort_cars_by_grade(rows)
     make_counts = {}
     for c in rows:
         make_counts[c["make"]] = make_counts.get(c["make"], 0) + 1
@@ -1674,10 +1709,11 @@ def _car_photo(text):
 
 @app.route("/api/cars")
 def api_cars():
-    """Simple JSON list of cars, for the search page."""
+    """Simple JSON list of cars, for the search page.
+    Best-grade cars first, same order as the Cars page."""
     db = get_db()
     rows = db.execute("SELECT * FROM cars ORDER BY price_fob").fetchall()
-    return jsonify([dict(r) for r in rows])
+    return jsonify([dict(r) for r in sort_cars_by_grade(rows)])
 
 
 # Make the database when the app starts. On Vercel this runs once

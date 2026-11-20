@@ -13,6 +13,25 @@
   if (!grid) return;
 
   var cards = Array.prototype.slice.call(grid.querySelectorAll(".car-card"));
+  // Best-grade cars first, even if the server ever sends them
+  // in another order. Same order as the server: S, 5, 6, 7.5,
+  // 4.5, 4, 3.5, 3, R, then cars with no grade last. Filtering
+  // and paging only hide cards, they never re-sort, so this one
+  // sort at load keeps the grade order on every page and for
+  // every search or make filter.
+  var GRADE_RANK = { "s": 0, "5": 1, "6": 2, "7.5": 2, "4.5": 3,
+                     "4": 4, "3.5": 5, "3": 6, "r": 7 };
+  function gradeRank(card) {
+    var g = (card.getAttribute("data-grade") || "").trim().toLowerCase();
+    if (!g) return 99;
+    return (g in GRADE_RANK) ? GRADE_RANK[g] : 98;
+  }
+  cards.forEach(function (card, i) { card._order = i; });
+  cards.sort(function (a, b) {
+    var d = gradeRank(a) - gradeRank(b);
+    return d !== 0 ? d : a._order - b._order;
+  });
+  cards.forEach(function (card) { grid.appendChild(card); });
   var page = 1;
 
   function filteredCards() {
