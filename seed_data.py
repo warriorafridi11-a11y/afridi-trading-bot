@@ -211,7 +211,7 @@ SAMPLE_FAQS = [
      "Japan, with about 100,000 cars each week.",
      "auction", ("bid", "auction")),
     ("How many cars do you have?",
-     "We have over 1,000 cars in our regular stock, and about 100,000 "
+     "We have over 2,000 cars in our regular stock, and about 100,000 "
      "cars each week through the Japan auctions. Tell me a make or a "
      "budget and I will show you cars.",
      "stock", ("how many cars", "how much stock")),
