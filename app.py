@@ -8,6 +8,7 @@ and answers from its knowledge base. No deep learning, no paid API.
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime
 
 from flask import Flask, g, jsonify, render_template, request
@@ -85,6 +86,139 @@ SAMPLE_RULES = [
 ]
 
 
+# Real buyer questions and answers, taken from afriditrading.com
+# (home page, How to Buy, FAQs, Payment Information, Shipping
+# Information and import pages). Short answers, simple words.
+# Each FAQ has keywords: the bot checks these first.
+SAMPLE_FAQS = [
+    ("How do I buy a car?",
+     "5 easy steps: 1. Search your car. 2. Inquire. 3. Get your invoice. "
+     "4. Pay. 5. Shipment. You can buy from stock in Japan, UK, Thailand "
+     "and Korea, or buy a pre-shipped car.",
+     "buying", ("how to buy", "how do i buy", "buying steps")),
+    ("How do I pay?",
+     "Pay by telegraphic transfer to our company bank account in Japan, "
+     "or by Visa, Mastercard or PayPal. We also take WISE business "
+     "account payments. The beneficiary is always Afridi Trading. Never "
+     "pay to a person and never use Western Union.",
+     "payment", ("how do i pay", "how to pay", "payment method")),
+    ("Can I pay with a card?",
+     "Yes. We take Visa, Mastercard and PayPal, as well as bank transfer "
+     "and WISE. Bank fees are paid by the buyer.",
+     "payment", ("pay with a card", "credit card", "visa", "mastercard", "paypal")),
+    ("What is your refund policy?",
+     "The auction security deposit is 100% refundable. If you cancel a "
+     "purchase order, you may need to pay the costs already spent, "
+     "because we may have to resell the car. Ask sales before you pay.",
+     "refund", ("refund", "cancel my order", "cancel purchase")),
+    ("How long does shipping take?",
+     "Delivery usually takes 4 to 8 weeks. The exact time depends on the "
+     "shipping schedule. Once your car is fully paid, we ship it on the "
+     "earliest available vessel.",
+     "shipping", ("how long", "delivery time", "shipping take")),
+    ("How much is freight?",
+     "Freight depends on the car size and the port, so there is no one "
+     "fixed freight price. The exact freight is written on your invoice. "
+     "Tell me your country for a sample freight price.",
+     "freight", ("freight", "shipping cost")),
+    ("Is shipping insured?",
+     "Yes. Shipping is insured, with full marine transit cover. In this "
+     "demo the delivered price adds $100 for insurance.",
+     "insurance", ("insurance", "insured")),
+    ("What documents do I get?",
+     "You get a proforma invoice first. After you pay, we ship the car "
+     "and courier the original B/L (bill of lading) to you, so you can "
+     "clear the car at your port.",
+     "documents", ("document", "bill of lading", "b/l", "papers")),
+    ("How do I collect my car at the port?",
+     "You collect the car at your destination port. Bring the original "
+     "B/L and your ID to clear it. We handle the auction, export papers "
+     "and shipping.",
+     "port", ("collect", "pick up my car", "pickup")),
+    ("What does FOB mean?",
+     "FOB means the price in Japan. Extra costs are freight, clearance, "
+     "import duty, registration and compliance fees. C&F means FOB plus "
+     "freight. CIF means FOB plus freight plus insurance.",
+     "price", ("fob", "cif", "c&f", "what does fob")),
+    ("What is an auction grade?",
+     "Auction grades go from 3 to 5 and S. Grade 5 and S are the best. "
+     "Grade 4 is good. Grade 3.5 is fair. Grade R means the car was "
+     "repaired after an accident.",
+     "grade", ("auction grade",)),
+    ("What is the auction sheet?",
+     "The auction sheet shows the car's condition, grade and marks. All "
+     "cars go through a full inspection to make sure they match the "
+     "sheet. Ask me about one grade, for example: what is grade 4?",
+     "grade", ("auction sheet",)),
+    ("Can I bid at the Japan auctions?",
+     "Yes. Register, talk to a sales representative, and pay a security "
+     "deposit (100% refundable) to start bidding. You bid up to your "
+     "account credit limit. We are members of all auction houses in "
+     "Japan, with about 100,000 cars each week.",
+     "auction", ("bid", "auction")),
+    ("How many cars do you have?",
+     "We have over 1,000 cars in our regular stock, and about 100,000 "
+     "cars each week through the Japan auctions. Tell me a make or a "
+     "budget and I will show you cars.",
+     "stock", ("how many cars", "how much stock")),
+    ("Are there hidden charges?",
+     "No. There are no registration fees or hidden charges, and sign up "
+     "is free. The buyer pays the bank fees.",
+     "payment", ("hidden charge", "hidden fee", "registration fee")),
+    ("Do you sell left-hand drive cars?",
+     "Left-hand drive cars are rare in Japan, but we can find them in "
+     "our Korean and American stock. Ask us for the model you want.",
+     "cars", ("left hand", "lhd")),
+    ("How do I know you are real and not a scam?",
+     "Verify any person at afriditrading.com/verify. Every real "
+     "representative has a verification card with a QR code, and their "
+     "WhatsApp number is on our live staff list. Our emails only end in "
+     "@afriditrading.com, and our staff never take payments personally.",
+     "trust", ("scam", "verify", "you are real", "fake", "not a scam")),
+    ("What is your WhatsApp number?",
+     "WhatsApp sales: +81 80 5173 0786 or +81 70 4457 0584. Customer "
+     "support: +81 80 7256 3364. Office hours are Monday to Friday 9 to "
+     "6, Saturday 9 to 4, Japan time.",
+     "contact", ("whatsapp",)),
+    ("Do you ship to my country?",
+     "We ship to 126 destinations. Tell me your country and I will tell "
+     "you the import age limit and the delivered price to your port.",
+     "shipping", ("ship to my country", "do you ship")),
+    ("How do I track my car?",
+     "Send your tracking number, for example: track ATJ-1001. Once your "
+     "car is fully paid, we ship it on the earliest available vessel.",
+     "tracking", ("track my car", "where is my car")),
+]
+
+
+
+# ---------- simple cache ----------
+# A plain Python dict with a 5-minute time limit. The bot reads the car
+# list, the FAQs and the import rules again and again, so it keeps a copy
+# in memory and only goes to the database when the copy is older than
+# 5 minutes. No Redis, no extra service, no paid tool. The 5-minute limit
+# is how the cache refreshes: new cars, FAQs or rules show up soon after
+# they change. Hits and misses are counted for the /health page.
+_CACHE = {}
+_CACHE_TIME = {}
+_CACHE_STATS = {"hits": 0, "misses": 0}
+CACHE_SECONDS = 300  # 5 minutes
+
+
+def cached_list(name, sql):
+    """Get a table from the cache, or from the database if it is old."""
+    now = time.time()
+    if name in _CACHE and now - _CACHE_TIME[name] < CACHE_SECONDS:
+        _CACHE_STATS["hits"] += 1
+        return _CACHE[name]
+    _CACHE_STATS["misses"] += 1
+    db = get_db()
+    rows = [dict(r) for r in db.execute(sql).fetchall()]
+    _CACHE[name] = rows
+    _CACHE_TIME[name] = now
+    return rows
+
+
 # ---------- database helpers ----------
 
 def get_db():
@@ -137,6 +271,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS reviews (
             id INTEGER PRIMARY KEY, user_id INTEGER, car_id INTEGER,
             stars INTEGER, comment TEXT);
+        CREATE TABLE IF NOT EXISTS faqs (
+            id INTEGER PRIMARY KEY, question TEXT, answer TEXT,
+            topic TEXT);
     """)
     # Add sample cars only the first time, when the table is empty.
     count = db.execute("SELECT COUNT(*) FROM cars").fetchone()[0]
@@ -151,6 +288,11 @@ def init_db():
         db.executemany(
             "INSERT INTO import_rules (country, max_car_age_years, notes)"
             " VALUES (?, ?, ?)", SAMPLE_RULES)
+    # Add FAQs only when that table is empty.
+    if db.execute("SELECT COUNT(*) FROM faqs").fetchone()[0] == 0:
+        db.executemany(
+            "INSERT INTO faqs (question, answer, topic) VALUES (?, ?, ?)",
+            [(q, a, t) for (q, a, t, k) in SAMPLE_FAQS])
         # One sample shipment, so tracking can be tried at once.
         db.execute(
             "INSERT INTO invoices (user_id, car_id, total_price, status)"
@@ -169,8 +311,7 @@ def init_db():
 
 def find_car(text):
     """Find a car in the question by its model name."""
-    db = get_db()
-    cars = db.execute("SELECT * FROM cars").fetchall()
+    cars = cached_list("cars", "SELECT * FROM cars")
     for car in cars:
         model = car["model"].lower()
         # "Aqua S" matches "aqua"; "Corolla Axio" matches "axio".
@@ -202,6 +343,18 @@ def bot_reply(text, chat_id):
     """Answer one buyer question. Rule-based: keyword matching only."""
     msg = text.lower().strip()
     db = get_db()
+
+    # 0. Real FAQs first: if the question matches a real buyer question
+    # from the website, answer with the real answer from the faqs table.
+    # Keywords are distinctive phrases, so a price question like
+    # "how much is the Aqua to Jamaica" does not match the freight FAQ.
+    faqs = cached_list("faqs", "SELECT * FROM faqs")
+    for (question, answer, topic, keywords) in SAMPLE_FAQS:
+        if any(k in msg for k in keywords):
+            row = next((f for f in faqs if f["question"] == question),
+                       None)
+            if row is not None:
+                return row["answer"]
 
     # 1. Track a shipment: "track ATJ-1001"
     found = re.search(r"atj-?\d+", msg)
@@ -354,14 +507,15 @@ def bot_reply(text, chat_id):
             return f"{make.title()} cars in stock: {names}."
 
     # 7. Import rules for a country.
+    rules = cached_list("rules",
+                        "SELECT * FROM import_rules")
     for country in ("jamaica", "trinidad", "ghana", "kenya", "antigua",
                     "nigeria", "uganda", "namibia", "pakistan", "bangladesh",
                     "india", "mauritius", "egypt", "angola", "south africa",
                     "tanzania", "zambia"):
         if country in msg:
-            row = db.execute(
-                "SELECT * FROM import_rules WHERE LOWER(country) LIKE ?",
-                ("%" + country + "%",)).fetchone()
+            row = next((r for r in rules
+                        if country in r["country"].lower()), None)
             if row:
                 age = (f"up to {row['max_car_age_years']} years old"
                        if row["max_car_age_years"] else "no age limit")
@@ -459,6 +613,17 @@ def bot_reply(text, chat_id):
 def home():
     """Home page with the chat window."""
     return render_template("index.html")
+
+
+@app.route("/health")
+def health():
+    """Tiny health page: is the bot up, and is the cache working?"""
+    return jsonify({
+        "status": "ok",
+        "cache_hits": _CACHE_STATS["hits"],
+        "cache_misses": _CACHE_STATS["misses"],
+        "cached_tables": sorted(_CACHE.keys()),
+    })
 
 
 @app.route("/policies")

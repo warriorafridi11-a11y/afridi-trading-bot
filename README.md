@@ -67,6 +67,21 @@ before paying. Read them all on the `/policies` page.
 No paid API, no vector database, no real RAG library — just the simple
 version a student can explain.
 
+## Real FAQs and a simple cache
+
+The bot keeps a `faqs` table with 20 real buyer questions and answers
+taken from afriditrading.com (buying steps, payment, refund, shipping,
+freight, delivery time, insurance, documents, port, FOB, grades,
+auction, stock, hidden charges, left-hand drive, scam checks, contact,
+shipping countries, tracking). It checks the FAQs first, by keyword,
+before its other rules — so real questions get real answers.
+
+It also has a simple in-memory cache: a plain Python dict with a
+5-minute time limit for the car list, the FAQs and the import rules.
+Repeated questions do not go to the database every time. After
+5 minutes the cache refreshes, so new data shows up soon. No Redis,
+no extra service. See the cache hits and misses on `/health`.
+
 ## Pages
 
 - `/` — home page with the chat window
