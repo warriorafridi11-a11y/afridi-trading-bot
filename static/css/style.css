@@ -323,6 +323,79 @@ label { font-weight: 600; font-size: 14px; }
 .car-actions .btn { flex: 1; padding: 10px 8px; font-size: 14px; white-space: nowrap; }
 .empty { text-align: center; color: #666; padding: 30px 0; }
 
+/* --- Cars page: search toolbar, make logos, pagination --- */
+.car-tools {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 4px;
+  flex-wrap: wrap;
+}
+.car-tools #car-search { flex: 2; min-width: 180px; }
+.car-tools select { flex: 1; min-width: 140px; width: auto; }
+#car-count { margin: 4px 0 0; }
+.car-title { display: flex; align-items: center; gap: 10px; }
+.make-logo {
+  height: 30px;
+  width: auto;
+  max-width: 64px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 6px;
+  padding: 3px 6px;
+  flex-shrink: 0;
+}
+.make-badge {
+  background: #fff;
+  color: #111;
+  font-weight: 800;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 5px 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* Small neat placeholder when a car has no photo yet: make logo
+   plus a short note — not a big empty grey box. */
+.car-photo-soon {
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #f7f7f7;
+  color: #666;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid #e3e3e3;
+}
+.soon-logo {
+  height: 34px;
+  width: auto;
+  max-width: 80px;
+  object-fit: contain;
+}
+.price-request { font-size: 21px; }
+.pagination {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 20px 0 8px;
+}
+.page-btn {
+  background: #fff;
+  color: #111;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 8px 13px;
+  font-size: 14px;
+  min-width: 40px;
+}
+.page-btn:hover { border-color: #d00; color: #d00; background: #fff; transform: none; }
+.page-btn.active { background: #d00; border-color: #d00; color: #fff; }
+.page-btn:disabled { opacity: 0.45; cursor: default; }
+.page-btn:disabled:hover { border-color: #ccc; color: #111; }
+
 /* --- Tables (admin, invoices, track) --- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; margin-top: 12px; background: #fff; }
@@ -400,6 +473,8 @@ footer ul { list-style: none; padding: 0; margin: 0; }
   .msg-row { max-width: 96%; }
   .search { flex-direction: column; }
   .search button { width: 100%; }
+  .car-tools { flex-direction: column; }
+  .car-tools select, .car-tools #car-search { width: 100%; }
   .car-actions { flex-direction: column; }
   .car-actions .btn { width: 100%; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }

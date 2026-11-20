@@ -2,29 +2,59 @@
 {% block title %}Cars — Afridi Trading Bot{% endblock %}
 {% block content %}
 <h1>Cars in stock</h1>
-<p class="lead">Real stock from Afridi Trading Japan. Pick a car and ask the bot about it, or get an invoice.</p>
-<form method="get" action="/cars" class="search">
-  <input type="number" name="budget" placeholder="Max budget in $"
-         value="{{ budget or '' }}" aria-label="Max budget in dollars">
-  <input type="text" name="make" placeholder="Make, e.g. Toyota"
-         value="{{ make or '' }}" aria-label="Make">
-  <button type="submit">Search</button>
-</form>
+<p class="lead">Real stock from Afridi Trading Japan. Pick a car and ask the bot about it, or get an invoice. Only cars with photos are shown here.</p>
+
+<div class="car-tools">
+  <input id="car-search" type="search" placeholder="Search make, model, year or price…"
+         aria-label="Search cars" autocomplete="off">
+  <select id="car-make" aria-label="Filter by make">
+    <option value="">All makes ({{ cars|length }})</option>
+    {% for m in makes %}
+    <option value="{{ m }}" {% if make == m %}selected{% endif %}>{{ m }} ({{ make_counts[m] }})</option>
+    {% endfor %}
+  </select>
+  <select id="car-rows" aria-label="Cars per page">
+    <option value="12">12 per page</option>
+    <option value="24" selected>24 per page</option>
+    <option value="48">48 per page</option>
+    <option value="all">Show all</option>
+  </select>
+</div>
+<p class="muted" id="car-count"></p>
+
 {% if cars %}
-<div class="car-grid">
+<div class="car-grid" id="car-grid">
   {% for car in cars %}
-  <article class="car-card">
+  {% set search_text = (car.make ~ ' ' ~ car.model ~ ' ' ~ car.year ~ ' ' ~ (car.price_fob|string if car.price_fob else 'price on request'))|lower %}
+  <article class="car-card" data-make="{{ car.make }}" data-search="{{ search_text }}">
     {% if car.image_url %}
     <img class="car-photo" src="{{ car.image_url }}" alt="{{ car.make }} {{ car.model }} {{ car.year }}" loading="lazy" onerror="this.style.display='none'">
     {% else %}
-    <div class="car-photo-empty">No photo yet — ask sales for photos of this car.</div>
+    <div class="car-photo-soon">
+      {% if car.make in make_logos %}
+      <img class="soon-logo" src="{{ make_logos[car.make] }}" alt="{{ car.make }} logo" loading="lazy" onerror="this.style.display='none'">
+      {% endif %}
+      <span>Photo coming soon</span>
+    </div>
     {% endif %}
     <div class="car-top">
-      <h3>{{ car.make }} {{ car.model }}</h3>
+      <div class="car-title">
+        {% if car.make in make_logos %}
+        <img class="make-logo" src="{{ make_logos[car.make] }}" alt="{{ car.make }} logo" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
+        <span class="make-badge" style="display:none">{{ car.make }}</span>
+        {% else %}
+        <span class="make-badge">{{ car.make }}</span>
+        {% endif %}
+        <h3>{{ car.make }} {{ car.model }}</h3>
+      </div>
       <small>{{ car.body_type or 'Used car' }} · Afridi Trading Japan</small>
     </div>
     <div class="car-body">
+      {% if car.price_fob %}
       <div class="price">${{ car.price_fob }}<small>FOB price in Japan</small></div>
+      {% else %}
+      <div class="price price-request">Price on request<small>Ask the bot for the price</small></div>
+      {% endif %}
       <div class="badges">
         <span class="badge">{{ car.year }}</span>
         {% if car.distance_km %}<span class="badge">{{ car.distance_km }} km</span>{% endif %}
@@ -41,7 +71,10 @@
   </article>
   {% endfor %}
 </div>
+<p class="empty" id="car-no-match" hidden>No cars match your search. Try another word or make.</p>
+<div class="pagination" id="car-pages"></div>
 {% else %}
 <p class="empty">No cars match your search. Try a bigger budget or another make.</p>
 {% endif %}
+<script src="/static/js/cars.js"></script>
 {% endblock %}

@@ -105,6 +105,39 @@ GRADES = {
     "r": "Grade R means the car was repaired after an accident. Ask us before you buy it.",
 }
 
+# Make logos for the Cars page. Real logo pictures from carlogos.org.
+# Only makes whose logo link was checked and works (HTTP 200) are
+# listed here. A make not in this list shows its name in a text
+# badge instead — never a broken picture.
+MAKE_LOGOS = {
+    "Toyota": "https://www.carlogos.org/car-logos/toyota-logo.png",
+    "Honda": "https://www.carlogos.org/car-logos/honda-logo.png",
+    "Lexus": "https://www.carlogos.org/car-logos/lexus-logo.png",
+    "Mazda": "https://www.carlogos.org/car-logos/mazda-logo.png",
+    "Nissan": "https://www.carlogos.org/car-logos/nissan-logo.png",
+    "BMW": "https://www.carlogos.org/car-logos/bmw-logo.png",
+    "Mercedes-Benz": "https://www.carlogos.org/car-logos/mercedes-benz-logo.png",
+    "Suzuki": "https://www.carlogos.org/car-logos/suzuki-logo.png",
+    "Mitsubishi": "https://www.carlogos.org/car-logos/mitsubishi-logo.png",
+    "Audi": "https://www.carlogos.org/car-logos/audi-logo.png",
+    "Daihatsu": "https://www.carlogos.org/car-logos/daihatsu-logo.png",
+    "Subaru": "https://www.carlogos.org/car-logos/subaru-logo.png",
+    "Ford": "https://www.carlogos.org/car-logos/ford-logo.png",
+    "Hyundai": "https://www.carlogos.org/car-logos/hyundai-logo.png",
+    "Volkswagen": "https://www.carlogos.org/car-logos/volkswagen-logo.png",
+    "Volvo": "https://www.carlogos.org/car-logos/volvo-logo.png",
+    "Porsche": "https://www.carlogos.org/car-logos/porsche-logo.png",
+    "Land Rover": "https://www.carlogos.org/car-logos/land-rover-logo.png",
+    "Peugeot": "https://www.carlogos.org/car-logos/peugeot-logo.png",
+    "Maserati": "https://www.carlogos.org/car-logos/maserati-logo.png",
+    "Kia": "https://www.carlogos.org/car-logos/kia-logo.png",
+    "Skoda": "https://www.carlogos.org/car-logos/skoda-logo.png",
+    "MG": "https://www.carlogos.org/car-logos/mg-logo.png",
+    "Mg": "https://www.carlogos.org/car-logos/mg-logo.png",
+    "Rover": "https://www.carlogos.org/car-logos/rover-logo.png",
+    "Luxgen": "https://www.carlogos.org/car-logos/luxgen-logo.png",
+}
+
 # Seed data (cars, import rules, FAQs) lives in seed_data.py,
 # only because app.py got too big to deploy in one piece.
 from seed_data import SAMPLE_CARS, SAMPLE_FAQS, SAMPLE_RULES, \
@@ -1473,7 +1506,12 @@ def policies():
 
 @app.route("/cars")
 def cars():
-    """Car list page, with search by budget and make."""
+    """Car list page, with search by budget and make.
+
+    The page also gets the list of makes (with counts) and the
+    make-logo links, so the search bar, make filter, rows filter
+    and logos all work in the browser without a page reload.
+    """
     db = get_db()
     budget = request.args.get("budget", type=int)
     make = request.args.get("make", "")
@@ -1482,8 +1520,24 @@ def cars():
         rows = [c for c in rows if c["price_fob"] <= budget]
     if make:
         rows = [c for c in rows if c["make"].lower() == make.lower()]
+    # Only cars WITH a photo are shown on this page. Cars without
+    # a photo stay in the database (they may get a photo later) —
+    # they are just hidden here, from the list, the search and the
+    # make counts. So "X cars found" only ever counts photo cars.
+    def _val(car, name):
+        try:
+            return car[name]
+        except (KeyError, IndexError, TypeError):
+            return None
+    rows = [c for c in rows if _val(c, "image_url")]
+    make_counts = {}
+    for c in rows:
+        make_counts[c["make"]] = make_counts.get(c["make"], 0) + 1
+    makes = sorted(make_counts, key=lambda m: (-make_counts[m], m))
     return render_template("cars.html", cars=rows,
-                           budget=budget, make=make)
+                           budget=budget, make=make,
+                           makes=makes, make_counts=make_counts,
+                           make_logos=MAKE_LOGOS)
 
 
 @app.route("/invoice/<int:car_id>")
