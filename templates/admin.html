@@ -27,6 +27,28 @@
   <div class="stat-card"><strong>{{ counts.faqs }}</strong><span>FAQs</span></div>
 </div>
 
+<h2>Crawl queue — getting all the cars, slowly</h2>
+<p>The website has about 38,000 cars on about 1,600 pages. The queue takes a few pages each day, waits between pages, and remembers what is done — so the website does not block us. The worker runs on a schedule, not on this website.</p>
+<div class="stat-grid">
+  <div class="stat-card"><strong>{{ queue_counts.get('pending', 0) }}</strong><span>Pages waiting</span></div>
+  <div class="stat-card"><strong>{{ queue_counts.get('done', 0) }}</strong><span>Pages done</span></div>
+  <div class="stat-card red"><strong>{{ queue_counts.get('failed', 0) }}</strong><span>Pages failed</span></div>
+  <div class="stat-card"><strong>{{ queue_counts.values() | sum }}</strong><span>Pages in queue</span></div>
+</div>
+<div class="card">
+<div class="table-wrap">
+<table>
+  <tr><th>Page</th><th>Status</th><th>Tries</th><th>Last error</th><th>Done at</th></tr>
+  {% for q in queue_last %}
+  <tr><td>{{ q.page_number }}</td><td>{{ q.status }}</td><td>{{ q.attempts }}</td>
+      <td>{{ q.last_error or '—' }}</td><td>{{ q.done_at or '—' }}</td></tr>
+  {% else %}
+  <tr><td colspan="5">The queue is empty here. Fill it where the worker runs: <code>python3 scripts/crawl_queue.py --fill</code></td></tr>
+  {% endfor %}
+</table>
+</div>
+</div>
+
 <h2>Recent users</h2>
 <div class="card">
 <div class="table-wrap">

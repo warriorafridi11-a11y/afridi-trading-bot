@@ -387,6 +387,54 @@ SAMPLE_CARS = [
     "Toyota|RAV4 adventure|2021|44000|17500||In stock",
     "Subaru|XV 2.0i-L Eyesight|2018|20000|12150||In stock",
     "Toyota|86 RZ|2022|18000|25350||In stock",
+    "Subaru|Impreza Wagon 2.0i-S Eyesight|2019|14000|11200||In stock",
+    "Subaru|Impreza Wagon 1.6i-L Eyesight|2021|45000|7700||In stock",
+    "Subaru|XV advance|2020|35000|13950|Hybrid|In stock",
+    "Toyota|RAV4 adventure|2021|47000|20700||In stock",
+    "Subaru|Impreza Wagon i-L Eyesight S style|2018|69000|5700||In stock",
+    "Toyota|86 GT|2018|17000|16400||In stock",
+    "Toyota|RAV4 adventure|2019|39000|18000||In stock",
+    "Subaru|XV 2.0e-S EyeSight|2022|49000|13450|Hybrid|In stock",
+    "Toyota|86 RZ|2022|43000|19300||In stock",
+    "Toyota|RAV4 adventure|2022|46000|23050|Hybrid|In stock",
+    "Subaru|XV 2.0i-S Eyesight|2018|70000|10550||In stock",
+    "Toyota|86 RZ|2025|10000|22850||In stock",
+    "Toyota|RAV4 adventure|2019|36000|19850||In stock",
+    "Subaru|XV 2.0i-L Eyesight|2018|65000|10350||In stock",
+    "Audi|A3 30 TFSI S line|2025||26500|Hybrid|In stock",
+    "Toyota|RAV4 G|2021|43000|20700|Hybrid|In stock",
+    "Toyota|RAV4 Z|2026|7000|34000|Hybrid|In stock",
+    "Toyota|86 RZ|2024|19000|23000||In stock",
+    "Subaru|Impreza Wagon 1.6i-L Eyesight|2018|42000|6850||In stock",
+    "Toyota|86 GT|2021|19000|19650||In stock",
+    "Toyota|86 SZ|2022|36000|18200||In stock",
+    "Toyota|RAV4 G|2025|24000|23200|Hybrid|In stock",
+    "Lexus|NX F sports|2023|35000|28700|Hybrid|In stock",
+    "Honda|Vezel Z Honda Sensing|2018|56000|8500|Hybrid|In stock",
+    "Toyota|Yaris Cross Z|2024|32000|14400|Hybrid|In stock",
+    "Lexus|RX F sports|2017|51000|13500||In stock",
+    "Honda|Vezel Z|2023|38000|14700|Hybrid|In stock",
+    "Honda|Vezel Z Honda Sensing|2018|91000|7500|Hybrid|In stock",
+    "Honda|Freed G Honda Sensing|2019|31000|9700|Hybrid|In stock",
+    "Honda|Freed G Honda Sensing|2019|75000|7500||In stock",
+    "Toyota|Corolla Cross Z|2024|38000|16900|Hybrid|In stock",
+    "Toyota|RAV4 GZ package|2024|27000|19900||In stock",
+    "Toyota|RAV4 G|2020|31000|17100|Hybrid|In stock",
+    "Toyota|Sienta G Cuero|2019|38000|9700|Hybrid|In stock",
+    "Toyota|Sienta G|2015|86000|4700||In stock",
+    "Toyota|Corolla Cross G|2024|37000|12900||In stock",
+    "Toyota|Noah S-Z|2023|35000|21500|Hybrid|In stock",
+    "Lexus|RX Version L|2024|13000|30900|Hybrid|In stock",
+    "Toyota|RAV4 adventure off road package|2020|44000|15300||In stock",
+    "Toyota|RAV4 adventure|2019|53000|13500||In stock",
+    "Toyota|Corolla Cross S|2024|22000|15300|Hybrid|In stock",
+    "Toyota|RAV4 adventure|2024|20000|21800|Hybrid|In stock",
+    "Toyota|Yaris Cross G|2023|13000|11800|Hybrid|In stock",
+    "Toyota|RAV4 G|2019|24000|14400|Hybrid|In stock",
+    "Toyota|Yaris Cross Z|2021|42000|11800|Hybrid|In stock",
+    "Toyota|Yaris Cross Z|2023|26000|12800|Hybrid|In stock",
+    "Honda|Freed closter|2024|42000|16500|Hybrid|In stock",
+    "Lexus|RX Version L|2021|39000|26800|Hybrid|In stock",
 ]
 
 
@@ -697,6 +745,15 @@ def init_db():
         CREATE TABLE IF NOT EXISTS faqs (
             id INTEGER PRIMARY KEY, question TEXT, answer TEXT,
             topic TEXT);
+        CREATE TABLE IF NOT EXISTS crawl_queue (
+            id INTEGER PRIMARY KEY,
+            page_url TEXT,
+            page_number INTEGER UNIQUE,
+            status TEXT,
+            attempts INTEGER DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT,
+            done_at TEXT);
     """)
     # Add a password column to users if the table was made before
     # sign-up existed. Passwords are stored HASHED, never plain text.
@@ -1294,6 +1351,17 @@ def admin():
     cars = db.execute("SELECT * FROM cars").fetchall()
     invoices = db.execute("SELECT * FROM invoices").fetchall()
     ships = db.execute("SELECT * FROM shipments").fetchall()
+    # Crawl queue: how many stock pages are done, waiting, failed.
+    # The queue worker (scripts/crawl_queue.py) fills this table.
+    # On Vercel the database starts fresh, so the queue is empty
+    # there — the real queue lives where the worker runs.
+    queue_rows = db.execute(
+        "SELECT status, COUNT(*) AS n FROM crawl_queue"
+        " GROUP BY status").fetchall()
+    queue_counts = {r["status"]: r["n"] for r in queue_rows}
+    queue_last = db.execute(
+        "SELECT * FROM crawl_queue ORDER BY page_number DESC"
+        " LIMIT 20").fetchall()
     return render_template(
         "admin.html", health={"app": "Running", "db_ok": db_ok,
                               "tables": tables,
@@ -1302,7 +1370,7 @@ def admin():
                               "cached_tables": sorted(_CACHE.keys())},
         counts=counts, users=users, chats=chats, messages=messages,
         questions=questions, faqs=faqs, cars=cars, invoices=invoices,
-        ships=ships)
+        ships=ships, queue_counts=queue_counts, queue_last=queue_last)
 
 
 @app.route("/admin/inquiry/answer/<int:inquiry_id>", methods=["POST"])

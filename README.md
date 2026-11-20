@@ -157,6 +157,43 @@ sold=Z`, plus the sync time. No schedule is set up in this repo —
 the daily schedule will be set up separately. The Supabase cars
 table needs a `ref` column first (the seed SQL file adds it).
 
+## Crawl queue — getting ALL the cars, slowly
+
+The website has about 38,000 cars on about 1,600 stock pages. Asking
+for them all at once gets us blocked (error 429). So the queue works
+like a line at a shop: one page at a time, 3 seconds wait between
+pages, and it remembers which pages are done. Each run takes only a
+few pages. Run it once a day and the bot slowly gets every car.
+
+Script: `scripts/crawl_queue.py` (plain Python, no extra package).
+Table: `crawl_queue` in the same SQLite database as the bot
+(`bot.db`) — same table and column names will be used in Supabase
+later, so moving is easy. New cars are saved in the database AND
+added to the seed list in `app.py`, so the live bot gets them on
+the next deploy. If a page fails (for example error 429), the run
+stops at once, the page is marked failed, and it is tried again
+next time. After 3 failed tries a page is left alone for a human.
+
+Exact commands (run from the repo folder):
+
+- Fill the queue with every stock page (reads page 1 to count cars):
+  `python3 scripts/crawl_queue.py --fill`
+- See how the queue is doing:
+  `python3 scripts/crawl_queue.py --status`
+- Crawl the next 10 pages (the daily run — this is the command the
+  daily schedule will run):
+  `python3 scripts/crawl_queue.py --pages 10`
+- Crawl more pages, with a longer wait between them:
+  `python3 scripts/crawl_queue.py --pages 20 --delay 5`
+
+The script prints a summary at the end: `pages done=X cars added=Y
+cars updated=Z pages failed=W`. The admin page shows the queue too
+(pages waiting, done, failed, and the last 20 rows). The queue
+worker runs on a schedule, NOT on Vercel — Vercel only shows the
+cars, it never crawls. Note: the queue on Vercel starts empty,
+because Vercel makes a fresh database each time it starts; the
+real queue lives where the worker runs.
+
 ## Real cars and import rules (Nov 2026)
 
 The bot's seed data is real data from afriditrading.com, not made up:
