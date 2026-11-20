@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Invoice — Afridi Trading Bot{% endblock %}
+{% block content %}
+<h1>Invoice</h1>
+<table>
+  <tr><th>Car</th><td>{{ car.make }} {{ car.model }} {{ car.year }}</td></tr>
+  <tr><th>Distance</th><td>{{ car.distance_km }} km</td></tr>
+  <tr><th>FOB price in Japan</th><td>${{ car.price_fob }}</td></tr>
+  <tr><th>Shipping + insurance</th><td>${{ total - car.price_fob }}</td></tr>
+  <tr><th>Total delivered to {{ port }}</th><td><strong>${{ total }}</strong></td></tr>
+</table>
+<p>Pay safely by bank transfer only to our company account in Japan
+or our WISE business account. Never pay to a person.</p>
+{% endblock %}

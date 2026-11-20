@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Cars — Afridi Trading Bot{% endblock %}
+{% block content %}
+<h1>Cars in stock</h1>
+<form method="get" action="/cars" class="search">
+  <input type="number" name="budget" placeholder="Max budget in $"
+         value="{{ budget or '' }}">
+  <input type="text" name="make" placeholder="Make, e.g. Toyota"
+         value="{{ make or '' }}">
+  <button type="submit">Search</button>
+</form>
+<table>
+  <tr><th>Car</th><th>Year</th><th>Distance</th><th>FOB price</th><th></th></tr>
+  {% for car in cars %}
+  <tr>
+    <td>{{ car.make }} {{ car.model }} ({{ car.body_type }})</td>
+    <td>{{ car.year }}</td>
+    <td>{{ car.distance_km }} km</td>
+    <td>${{ car.price_fob }}</td>
+    <td><a href="/invoice/{{ car.id }}">Invoice</a></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5">No cars match your search.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

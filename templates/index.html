@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Afridi Trading Bot — Home{% endblock %}
+{% block content %}
+<h1>Buy a Japanese used car — talk to our bot</h1>
+<p>Ask about a car, a price, an auction grade, shipping, or import rules.
+The bot answers at once, day and night.</p>
+
+<div class="chat-box" id="chat-box">
+  <div class="msg bot">Hello! I am the Afridi Trading Bot. Try: "How much is the Toyota Aqua to Jamaica?"</div>
+</div>
+<form id="chat-form">
+  <input id="chat-input" type="text" placeholder="Type your question here..." autocomplete="off">
+  <button type="submit">Send</button>
+</form>
+<p class="hint">Try these: "cars under $2000" · "what is grade 4" · "track ATJ-1001" · "import rules for Ghana"</p>
+<script src="/static/js/chat.js"></script>
+{% endblock %}

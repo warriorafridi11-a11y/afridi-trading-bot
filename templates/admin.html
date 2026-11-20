@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Admin — Afridi Trading Bot{% endblock %}
+{% block content %}
+<h1>Admin panel</h1>
+
+<h2>Recent chat messages</h2>
+<table>
+  <tr><th>From</th><th>Message</th></tr>
+  {% for m in chats %}
+  <tr><td>{{ m.sender }}</td><td>{{ m.text }}</td></tr>
+  {% else %}
+  <tr><td colspan="2">No chats yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Questions for a human</h2>
+<table>
+  <tr><th>Question</th><th>Status</th></tr>
+  {% for q in questions %}
+  <tr><td>{{ q.question }}</td><td>{{ q.status }}</td></tr>
+  {% else %}
+  <tr><td colspan="2">No open questions.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Cars</h2>
+<table>
+  <tr><th>Car</th><th>Year</th><th>FOB price</th><th>Status</th></tr>
+  {% for car in cars %}
+  <tr><td>{{ car.make }} {{ car.model }}</td><td>{{ car.year }}</td>
+      <td>${{ car.price_fob }}</td><td>{{ car.status }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Invoices</h2>
+<table>
+  <tr><th>ID</th><th>Car</th><th>Total</th><th>Status</th></tr>
+  {% for inv in invoices %}
+  <tr><td>{{ inv.id }}</td><td>{{ inv.car_id }}</td>
+      <td>${{ inv.total_price }}</td><td>{{ inv.status }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Shipments</h2>
+<table>
+  <tr><th>Tracking</th><th>Vessel</th><th>Status</th><th>Port</th></tr>
+  {% for s in ships %}
+  <tr><td>{{ s.tracking_no }}</td><td>{{ s.vessel }}</td>
+      <td>{{ s.status }}</td><td>{{ s.port }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
