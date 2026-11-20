@@ -12,6 +12,29 @@ The bot answers at once, day and night.</p>
   <input id="chat-input" type="text" placeholder="Type your question here..." autocomplete="off">
   <button type="submit">Send</button>
 </form>
-<p class="hint">Try these: "cars under $2000" · "what is grade 4" · "track ATJ-1001" · "import rules for Ghana"</p>
+<p class="hint">Try these: "cars under $2000" · "what is grade 4" · "track ATJ-1001" · "import rules for Ghana" · "what is your refund policy" · "how much is freight to Jamaica"</p>
+<p><a href="/policies">Read our Policies — payment, shipping, freight, insurance and refunds</a></p>
+
+<h2>Things the bot can do</h2>
+<p>The bot does not only talk — it does things for you:</p>
+<ul>
+  <li>Find a car by budget, make or body type</li>
+  <li>Work out the delivered price to your port</li>
+  <li>Make an invoice for a car you choose</li>
+  <li>Track your shipment by its number</li>
+  <li>Explain auction grades, import rules, policies and freight</li>
+  <li>Save a hard question for a human to answer</li>
+</ul>
+
+<h2>How the bot is built</h2>
+<p>Simple ideas, in easy words:</p>
+<ol>
+  <li><b>Brand voice:</b> the bot always speaks as Afridi Trading Japan, in simple polite words. Its promise is: WHAT YOU SEE IS WHAT YOU RECEIVE.</li>
+  <li><b>True answers only:</b> the bot only answers from its own knowledge base and database — cars, prices, policies, freight and import rules. If it does not know, it says so and asks a human, instead of guessing a price, a grade or a refund.</li>
+  <li><b>Tool actions:</b> the bot can do things — make an invoice, track a shipment, and save your question for a human.</li>
+  <li><b>Guardrails:</b> the bot never promises a price or grade it has not checked, never takes money, never changes a price, and sends hard questions to a human.</li>
+  <li><b>Human handover:</b> every chat is saved in the database, so the admin can read what the bot said and take over at any time.</li>
+</ol>
+<p>No paid API, no vector database, no big AI library — just Python, Flask and a simple keyword brain.</p>
 <script src="/static/js/chat.js"></script>
 {% endblock %}

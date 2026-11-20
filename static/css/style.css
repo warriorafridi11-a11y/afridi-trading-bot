@@ -60,3 +60,26 @@ footer {
 .hint { color: #666; font-size: 14px; }
 .search { display: flex; gap: 8px; margin-bottom: 12px; }
 .search input { flex: 1; }
+
+/* --- Simple animations: logo fades in, chat messages slide in,
+   buttons grow a little when you hover. Pure CSS, no libraries. --- */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.site-logo {
+  height: 48px;
+  width: 48px;
+  vertical-align: middle;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: fadeIn 1s ease-in;
+}
+.logo { animation: fadeIn 1s ease-in; }
+.msg { animation: slideIn 0.3s ease-out; }
+button { transition: transform 0.15s ease, background 0.15s ease; }
+button:hover { transform: scale(1.05); background: #b00; }
+nav a { transition: color 0.15s ease; }
+main { animation: fadeIn 0.6s ease-in; }

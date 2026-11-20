@@ -34,10 +34,44 @@ automatically.
 - "Track ATJ-1001"
 - "Import rules for Ghana"
 
+## Policies and freight
+
+The bot also answers policy and freight questions, using only what
+afriditrading.com actually says. It explains the payment policy (bank
+transfer only to the company account in Japan or the WISE business
+account, never to a person), the shipping policy, freight (freight
+depends on the car size and the port, so the bot gives the demo sample
+freight and says the exact freight is on the invoice), delivery time
+(the website gives no fixed time), marine insurance (full marine
+transit cover), the documents you get (invoice and original B/L), and
+collecting the car at the port. The website does not publish a refund
+policy, so the bot says that honestly and tells the buyer to ask sales
+before paying. Read them all on the `/policies` page.
+
+## How the bot is built (simple production-agent ideas)
+
+1. **Brand voice:** the bot always speaks as Afridi Trading Japan, in
+   simple polite words — "WHAT YOU SEE IS WHAT YOU RECEIVE".
+2. **True answers only:** the bot only answers from its own knowledge base
+   and database (cars, prices, policies, freight, import rules). If it
+   does not know, it says so and saves the question for a human instead
+   of guessing a price, grade or refund.
+3. **Tool actions:** the bot can do things, not just talk — make an
+   invoice, track a shipment, save an inquiry for a human.
+4. **Guardrails:** it never promises a price or grade it has not checked,
+   never takes money, never changes a price, and sends hard questions to
+   a human.
+5. **Human handover:** every chat is saved in the database with its
+   messages, so the admin can read it and take over.
+
+No paid API, no vector database, no real RAG library — just the simple
+version a student can explain.
+
 ## Pages
 
 - `/` — home page with the chat window
 - `/cars` — car list, search by budget and make
+- `/policies` — policies: payment, shipping, freight, insurance, documents, refunds
 - `/invoice/<car id>` — invoice for one car
 - `/track` — track a shipment, try `ATJ-1001`
 - `/admin` — admin panel: chats, cars, invoices, shipments
