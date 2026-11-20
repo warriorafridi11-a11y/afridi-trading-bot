@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Sign in — Afridi Trading Bot{% endblock %}
 {% block content %}
+<div class="card form-card">
 <h1>Sign in</h1>
 <p>Sign in to see your old chats and keep talking where you left off.</p>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <form method="post" action="/auth/sign-in">
-  <label>Email<br><input type="email" name="email" required></label><br>
-  <label>Password<br><input type="password" name="password" required></label><br>
+  <label>Email<br><input type="email" name="email" required></label>
+  <label>Password<br><input type="password" name="password" required></label>
   <button type="submit">Sign in</button>
 </form>
 <p>No account yet? <a href="/auth/sign-up">Sign up</a>.</p>
+</div>
 {% endblock %}

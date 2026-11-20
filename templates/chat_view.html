@@ -2,13 +2,27 @@
 {% block title %}Chat #{{ chat.id }} — Afridi Trading Bot{% endblock %}
 {% block content %}
 <h1>Chat #{{ chat.id }}</h1>
-<p>Started: {{ chat.started_at }}</p>
-<div class="chat-box">
-  {% for m in messages %}
-  <div class="msg {{ 'user' if m.sender == 'buyer' else 'bot' }}">{{ m.text }}</div>
-  {% else %}
-  <p>No messages in this chat yet.</p>
-  {% endfor %}
+<p class="muted">Started: {{ chat.started_at }}</p>
+<div class="chat-card">
+  <div class="chat-head">
+    <img src="/static/logo.png" alt="Afridi Trading Bot" onerror="this.style.display='none'">
+    <div>
+      <strong>Afridi Trading Bot</strong>
+      <small>Saved chat</small>
+    </div>
+  </div>
+  <div class="chat-box">
+    {% for m in messages %}
+    <div class="msg-row {{ 'user' if m.sender == 'buyer' else 'bot' }}">
+      {% if m.sender != 'buyer' %}
+      <img class="msg-avatar" src="/static/logo.png" alt="" onerror="this.style.display='none'">
+      {% endif %}
+      <div class="msg {{ 'user' if m.sender == 'buyer' else 'bot' }}">{{ m.text }}</div>
+    </div>
+    {% else %}
+    <p>No messages in this chat yet.</p>
+    {% endfor %}
+  </div>
 </div>
-<p><a href="/my-chats">Back to My chats</a> · <a href="/">Talk to the bot</a></p>
+<p><a class="btn" href="/my-chats">Back to My chats</a> <a class="btn btn-outline" href="/">Talk to the bot</a></p>
 {% endblock %}

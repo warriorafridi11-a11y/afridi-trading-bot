@@ -2,25 +2,39 @@
 {% block title %}Cars — Afridi Trading Bot{% endblock %}
 {% block content %}
 <h1>Cars in stock</h1>
+<p class="lead">Real stock from Afridi Trading Japan. Pick a car and ask the bot about it, or get an invoice.</p>
 <form method="get" action="/cars" class="search">
   <input type="number" name="budget" placeholder="Max budget in $"
-         value="{{ budget or '' }}">
+         value="{{ budget or '' }}" aria-label="Max budget in dollars">
   <input type="text" name="make" placeholder="Make, e.g. Toyota"
-         value="{{ make or '' }}">
+         value="{{ make or '' }}" aria-label="Make">
   <button type="submit">Search</button>
 </form>
-<table>
-  <tr><th>Car</th><th>Year</th><th>Distance</th><th>FOB price</th><th></th></tr>
+{% if cars %}
+<div class="car-grid">
   {% for car in cars %}
-  <tr>
-    <td>{{ car.make }} {{ car.model }}{% if car.body_type %} ({{ car.body_type }}){% endif %}</td>
-    <td>{{ car.year }}</td>
-    <td>{% if car.distance_km %}{{ car.distance_km }} km{% else %}—{% endif %}</td>
-    <td>${{ car.price_fob }}</td>
-    <td><a href="/invoice/{{ car.id }}">Invoice</a></td>
-  </tr>
-  {% else %}
-  <tr><td colspan="5">No cars match your search.</td></tr>
+  <article class="car-card">
+    <div class="car-top">
+      <h3>{{ car.make }} {{ car.model }}</h3>
+      <small>{{ car.body_type or 'Used car' }} · Afridi Trading Japan</small>
+    </div>
+    <div class="car-body">
+      <div class="price">${{ car.price_fob }}<small>FOB price in Japan</small></div>
+      <div class="badges">
+        <span class="badge">{{ car.year }}</span>
+        {% if car.distance_km %}<span class="badge">{{ car.distance_km }} km</span>{% endif %}
+        {% if car.body_type %}<span class="badge">{{ car.body_type }}</span>{% endif %}
+        <span class="badge {% if car.status == 'available' %}green{% else %}red{% endif %}">{{ car.status }}</span>
+      </div>
+      <div class="car-actions">
+        <a class="btn" href="/?ask=How much is the {{ car.make }} {{ car.model }} {{ car.year }}?">Ask the bot about this car</a>
+        <a class="btn btn-dark" href="/invoice/{{ car.id }}">Invoice</a>
+      </div>
+    </div>
+  </article>
   {% endfor %}
-</table>
+</div>
+{% else %}
+<p class="empty">No cars match your search. Try a bigger budget or another make.</p>
+{% endif %}
 {% endblock %}

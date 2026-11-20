@@ -8,32 +8,64 @@
 </head>
 <body>
   <header>
-    <div class="logo"><img class="site-logo" src="/static/logo.png" alt="Afridi Trading Japan logo" onerror="this.style.display='none'"> AFRIDI TRADING <span>JAPAN</span></div>
+    <a class="brand" href="/">
+      <img class="site-logo" src="/static/logo.png" alt="Afridi Trading Japan logo" onerror="this.style.display='none'">
+      AFRIDI TRADING <span>JAPAN</span>
+    </a>
     <nav>
-      <a href="/">Home &amp; Chat</a>
+      <a href="/">Home</a>
       <a href="/cars">Cars</a>
       <a href="/policies">Policies</a>
       <a href="/track">Track</a>
+      <a href="/admin">Admin</a>
       {% if session.get('user_id') %}
       <a href="/my-chats">My chats</a>
       <a href="/auth/sign-out">Sign out ({{ session.get('user_name') }})</a>
       {% else %}
       <a href="/auth/sign-in">Sign in</a>
-      <a href="/auth/sign-up">Sign up</a>
       {% endif %}
-      <a href="/admin">Admin</a>
     </nav>
   </header>
   <main>
     {% block content %}{% endblock %}
   </main>
   <footer>
-    <p>Afridi Trading Japan — What you see is what you receive.</p>
-    <p>
-      <a href="https://www.afriditrading.com/">afriditrading.com</a> ·
-      <a href="https://www.facebook.com/afriditradingjapan">Facebook</a> ·
-      <a href="https://www.tiktok.com/@afriditradingjapan">TikTok @afriditradingjapan</a>
-    </p>
+    <div class="footer-inner">
+      <div>
+        <h3>Afridi Trading Japan</h3>
+        <p>Japanese used cars, exported with honesty.</p>
+        <p><strong>WHAT YOU SEE IS WHAT YOU RECEIVE.</strong></p>
+        <p>JUMVEA member · Japan Car Trust odometer guarantee · 4.7 out of 5 stars from buyers.</p>
+      </div>
+      <div>
+        <h3>Quick links</h3>
+        <ul>
+          <li><a href="/">Home &amp; Chat</a></li>
+          <li><a href="/cars">Cars in stock</a></li>
+          <li><a href="/policies">Policies</a></li>
+          <li><a href="/track">Track your shipment</a></li>
+          <li><a href="https://www.afriditrading.com/">afriditrading.com</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Contact us</h3>
+        <ul>
+          <li>WhatsApp sales: <a href="https://wa.me/818051730786">+81 80 5173 0786</a></li>
+          <li>WhatsApp sales: <a href="https://wa.me/817044570584">+81 70 4457 0584</a></li>
+          <li>Support: <a href="https://wa.me/818072563364">+81 80 7256 3364</a></li>
+          <li>Office: Mon–Fri 9:00–18:00, Sat 9:00–16:00 (Japan time)</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Follow us</h3>
+        <ul>
+          <li><a href="https://www.facebook.com/afriditradingjapan">Facebook — Afridi Trading Japan</a></li>
+          <li><a href="https://www.tiktok.com/@afriditradingjapan">TikTok — @afriditradingjapan</a></li>
+          <li><a href="https://www.afriditrading.com/">Website — afriditrading.com</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">© Afridi Trading Japan — What you see is what you receive.</div>
   </footer>
 </body>
 </html>

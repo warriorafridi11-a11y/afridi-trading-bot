@@ -4,6 +4,8 @@
 <h1>Admin panel</h1>
 
 <h2>Health — is the app ok?</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>App</th><td>{{ health.app }}</td></tr>
   <tr><th>Database</th><td>{% if health.db_ok %}OK{% else %}ERROR — database did not answer{% endif %}</td></tr>
@@ -11,19 +13,23 @@
   <tr><th>Cache — items saved</th><td>{{ health.cached_tables | join(', ') if health.cached_tables else 'none yet' }}</td></tr>
   <tr><th>Cache — hits / misses</th><td>{{ health.cache_hits }} hits / {{ health.cache_misses }} misses</td></tr>
 </table>
+</div>
+</div>
 
 <h2>Usage — how much is happening?</h2>
-<table>
-  <tr><th>Users</th><td>{{ counts.users }}</td></tr>
-  <tr><th>Chats</th><td>{{ counts.chats }}</td></tr>
-  <tr><th>Messages</th><td>{{ counts.messages }}</td></tr>
-  <tr><th>Messages today</th><td>{{ counts.messages_today }}</td></tr>
-  <tr><th>Invoices</th><td>{{ counts.invoices }}</td></tr>
-  <tr><th>Open questions for a human</th><td>{{ counts.inquiries }}</td></tr>
-  <tr><th>FAQs</th><td>{{ counts.faqs }}</td></tr>
-</table>
+<div class="stat-grid">
+  <div class="stat-card"><strong>{{ counts.users }}</strong><span>Users</span></div>
+  <div class="stat-card"><strong>{{ counts.chats }}</strong><span>Chats</span></div>
+  <div class="stat-card"><strong>{{ counts.messages }}</strong><span>Messages</span></div>
+  <div class="stat-card"><strong>{{ counts.messages_today }}</strong><span>Messages today</span></div>
+  <div class="stat-card"><strong>{{ counts.invoices }}</strong><span>Invoices</span></div>
+  <div class="stat-card red"><strong>{{ counts.inquiries }}</strong><span>Open questions</span></div>
+  <div class="stat-card"><strong>{{ counts.faqs }}</strong><span>FAQs</span></div>
+</div>
 
 <h2>Recent users</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>Name</th><th>Email</th><th>Role</th></tr>
   {% for u in users %}
@@ -32,8 +38,12 @@
   <tr><td colspan="3">No users yet.</td></tr>
   {% endfor %}
 </table>
+</div>
+</div>
 
 <h2>Recent chats</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>Chat</th><th>Customer</th><th>Started</th></tr>
   {% for c in chats %}
@@ -42,8 +52,12 @@
   <tr><td colspan="3">No chats yet.</td></tr>
   {% endfor %}
 </table>
+</div>
+</div>
 
 <h2>Recent chat messages</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>From</th><th>Message</th></tr>
   {% for m in messages %}
@@ -52,6 +66,8 @@
   <tr><td colspan="2">No messages yet.</td></tr>
   {% endfor %}
 </table>
+</div>
+</div>
 
 <h2>Unanswered questions — answer them here</h2>
 <p>When the bot does not know an answer, the customer's question is saved here as an open question. Type your answer and press Save. Saving does two things: it marks the question as answered, and it adds the question + answer to the Knowledge base below, so the next customer who asks the same thing gets the answer at once.</p>
@@ -60,7 +76,7 @@
   <p><strong>Question:</strong> {{ q.question }}<br>
   <small>Asked by: {{ q.user_name or 'Guest' }}{% if q.user_email %} ({{ q.user_email }}){% endif %}</small></p>
   <form method="post" action="/admin/inquiry/answer/{{ q.id }}">
-    <label>Your answer<br><textarea name="answer" required rows="2" style="width:100%"></textarea></label><br>
+    <label>Your answer<br><textarea name="answer" required rows="2"></textarea></label><br>
     <label>Topic<br><input type="text" name="topic" placeholder="e.g. payment"></label>
     <button type="submit">Save answer</button>
   </form>
@@ -71,12 +87,15 @@
 
 <h2>Knowledge base — all FAQs</h2>
 <p>Every question + answer the bot knows. Add a new one by hand, or delete a wrong one.</p>
+<div class="card">
 <form method="post" action="/admin/faq/add">
-  <label>Question<br><input type="text" name="question" required style="width:100%"></label><br>
-  <label>Answer<br><input type="text" name="answer" required style="width:100%"></label><br>
+  <label>Question<br><input type="text" name="question" required></label><br>
+  <label>Answer<br><input type="text" name="answer" required></label><br>
   <label>Topic<br><input type="text" name="topic" placeholder="e.g. payment"></label><br>
   <button type="submit">Add FAQ</button>
 </form>
+</div>
+<div class="table-wrap">
 <table>
   <tr><th>Question</th><th>Topic</th><th></th></tr>
   {% for f in faqs %}
@@ -86,8 +105,11 @@
   <tr><td colspan="3">No FAQs yet.</td></tr>
   {% endfor %}
 </table>
+</div>
 
 <h2>Cars</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>Car</th><th>Year</th><th>FOB price</th><th>Status</th></tr>
   {% for car in cars %}
@@ -95,8 +117,12 @@
       <td>${{ car.price_fob }}</td><td>{{ car.status }}</td></tr>
   {% endfor %}
 </table>
+</div>
+</div>
 
 <h2>Invoices</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>ID</th><th>Car</th><th>Total</th><th>Status</th></tr>
   {% for inv in invoices %}
@@ -104,8 +130,12 @@
       <td>${{ inv.total_price }}</td><td>{{ inv.status }}</td></tr>
   {% endfor %}
 </table>
+</div>
+</div>
 
 <h2>Shipments</h2>
+<div class="card">
+<div class="table-wrap">
 <table>
   <tr><th>Tracking</th><th>Vessel</th><th>Status</th><th>Port</th></tr>
   {% for s in ships %}
@@ -113,4 +143,6 @@
       <td>{{ s.status }}</td><td>{{ s.port }}</td></tr>
   {% endfor %}
 </table>
+</div>
+</div>
 {% endblock %}

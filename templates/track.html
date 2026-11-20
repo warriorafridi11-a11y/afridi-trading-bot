@@ -2,19 +2,24 @@
 {% block title %}Track — Afridi Trading Bot{% endblock %}
 {% block content %}
 <h1>Track your shipment</h1>
+<p class="lead">Type your tracking number and follow your car on its way to your port.</p>
+<div class="card">
 <form method="get" action="/track" class="search">
   <input type="text" name="code" placeholder="Tracking number, e.g. ATJ-1001"
-         value="{{ code }}">
+         value="{{ code }}" aria-label="Tracking number">
   <button type="submit">Track</button>
 </form>
 {% if code and ship %}
+<div class="table-wrap">
 <table>
   <tr><th>Tracking number</th><td>{{ ship.tracking_no }}</td></tr>
   <tr><th>Vessel</th><td>{{ ship.vessel }}</td></tr>
   <tr><th>Status</th><td>{{ ship.status }}</td></tr>
   <tr><th>Port</th><td>{{ ship.port }}</td></tr>
 </table>
+</div>
 {% elif code %}
 <p>No shipment found for {{ code }}. Check the number and try again.</p>
 {% endif %}
+</div>
 {% endblock %}
