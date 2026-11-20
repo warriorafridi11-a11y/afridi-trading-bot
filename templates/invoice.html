@@ -1,19 +1,152 @@
-{% extends "base.html" %}
-{% block title %}Invoice — Afridi Trading Bot{% endblock %}
-{% block content %}
-<h1>Invoice</h1>
-<div class="card">
-<div class="table-wrap">
-<table>
-  <tr><th>Car</th><td>{{ car.make }} {{ car.model }} {{ car.year }}</td></tr>
-  <tr><th>Distance</th><td>{{ car.distance_km }} km</td></tr>
-  <tr><th>FOB price in Japan</th><td>${{ car.price_fob }}</td></tr>
-  <tr><th>Shipping + insurance</th><td>${{ total - car.price_fob }}</td></tr>
-  <tr><th>Total delivered to {{ port }}</th><td><strong>${{ total }}</strong></td></tr>
-</table>
-</div>
-<p>Pay safely by bank transfer only to our company account in Japan
-or our WISE business account. Never pay to a person.</p>
-<p><a class="btn" href="/cars">Back to cars</a> <a class="btn btn-outline" href="/">Ask the bot</a></p>
-</div>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proforma Invoice {{ invoice_no }} — Afridi Trading Japan</title>
+  <style>
+    /* Proforma invoice, made to look like the real Afridi Trading
+       invoice. This page shows no personal details at all.
+       Print friendly: white paper, black text, red title only. */
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f2f2f2; color: #111;
+           font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+    .sheet { max-width: 900px; margin: 24px auto; background: #fff;
+             padding: 32px 36px; box-shadow: 0 2px 12px rgba(0,0,0,.15); }
+    .top { display: flex; justify-content: space-between; align-items: center;
+           border-bottom: 3px solid #c8102e; padding-bottom: 12px; }
+    .top .brand { display: flex; align-items: center; gap: 12px; }
+    .top img { height: 56px; }
+    .top .co { font-size: 20px; font-weight: bold; letter-spacing: 1px; }
+    .top .co span { color: #c8102e; }
+    h1 { text-align: center; color: #c8102e; letter-spacing: 3px;
+         font-size: 26px; margin: 22px 0 18px; }
+    h2 { font-size: 15px; letter-spacing: 1px; border-bottom: 2px solid #111;
+         padding-bottom: 4px; margin: 24px 0 10px; }
+    table { border-collapse: collapse; width: 100%; }
+    .billfrom td { padding: 5px 8px; vertical-align: top; }
+    .billfrom td.label { font-weight: bold; width: 170px; color: #333; }
+    .units { font-weight: bold; margin: 18px 0 8px; }
+    .veh th, .veh td { border: 1px solid #999; padding: 8px; text-align: left;
+                       vertical-align: top; }
+    .veh th { background: #111; color: #fff; font-size: 12px;
+              letter-spacing: .5px; }
+    .veh td.amount, .veh th.amount { text-align: right; white-space: nowrap; }
+    .veh tr.total td { font-weight: bold; background: #f7f7f7; }
+    .note { font-size: 13px; color: #444; margin-top: 10px; }
+    .bank { display: flex; gap: 32px; flex-wrap: wrap; }
+    .bank > div { flex: 1; min-width: 260px; }
+    .bank p { margin: 5px 0; line-height: 1.5; }
+    .verify { text-align: center; font-weight: bold; letter-spacing: 2px;
+              margin: 36px 0 8px; font-size: 15px; }
+    .qr { text-align: center; margin: 8px 0; }
+    .qr img { border: 2px solid #111; padding: 6px; background: #fff; }
+    .qr-url { text-align: center; font-size: 12px; color: #444; margin: 0 0 8px; }
+    .actions { max-width: 900px; margin: 0 auto 24px; text-align: center; }
+    .btn { display: inline-block; background: #c8102e; color: #fff;
+           padding: 10px 18px; border-radius: 6px; text-decoration: none;
+           margin: 4px; font-weight: bold; border: none; cursor: pointer;
+           font-size: 14px; }
+    .btn.dark { background: #111; }
+    @media print {
+      body { background: #fff; }
+      .sheet { box-shadow: none; margin: 0; max-width: none; padding: 0; }
+      .actions { display: none; }
+    }
+    @media (max-width: 640px) {
+      .sheet { padding: 18px; margin: 0; }
+      .top { flex-direction: column; gap: 8px; }
+      h1 { font-size: 20px; }
+      .veh th, .veh td { font-size: 12px; padding: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="top">
+      <div class="brand">
+        <img src="/static/logo.png" alt="Afridi Trading Japan logo" onerror="this.style.display='none'">
+        <div class="co">AFRIDI TRADING <span>JAPAN</span></div>
+      </div>
+      <div>www.afriditrading.com</div>
+    </div>
+
+    <h1>PROFORMA INVOICE</h1>
+
+    <h2>BILL FROM</h2>
+    <table class="billfrom">
+      <tr><td class="label">Company Name</td><td>AFRIDI TRADING CO., LTD</td></tr>
+      <tr><td class="label">Address</td><td>Soka-Shi, Yoshi-cho 2-3-31 Saitama, Japan</td></tr>
+      <tr><td class="label">Fax</td><td>81 489205825</td></tr>
+      <tr><td class="label">Phone</td><td>81 7044570584</td></tr>
+      <tr><td class="label">Email</td><td>sales@afriditrading.com</td></tr>
+      <tr><td class="label">Website</td><td>https://www.afriditrading.com</td></tr>
+      <tr><td class="label">Invoice Number</td><td>{{ invoice_no }}</td></tr>
+      <tr><td class="label">Invoice Issue Date</td><td>{{ issue_date }}</td></tr>
+      <tr><td class="label">Invoice Valid Date</td><td>{{ valid_date }}</td></tr>
+      <tr><td class="label">Payment Due Date</td><td>{{ due_date }}</td></tr>
+      <tr><td class="label">Sales Agent</td><td>Abdul wahab junior</td></tr>
+    </table>
+
+    <p class="units">Total Unit(s): 1</p>
+
+    <table class="veh">
+      <tr>
+        <th>CHASSIS NO</th>
+        <th>STOCK INFO</th>
+        <th>ADDITIONAL INFO</th>
+        <th>DEPOSIT RATIO</th>
+        <th>SHIPPING INFO</th>
+        <th class="amount">AMOUNT</th>
+      </tr>
+      <tr>
+        <td>—</td>
+        <td>{{ car.make }} {{ car.model }} {{ car.year }}{% if car.distance_km %}, {{ car.distance_km }} km{% endif %}{% if car.ref %}<br>Ref: {{ car.ref }}{% endif %}</td>
+        <td>{% if car.body_type %}{{ car.body_type }}{% endif %}{% if car.auction_grade %}{% if car.body_type %}<br>{% endif %}Auction grade {{ car.auction_grade }}{% endif %}{% if not car.body_type and not car.auction_grade %}—{% endif %}</td>
+        <td>—</td>
+        <td>C&amp;F<br>Ro Ro<br>{{ port }}</td>
+        <td class="amount">{{ total }}</td>
+      </tr>
+      <tr class="total">
+        <td colspan="5">TOTAL</td>
+        <td class="amount">$ {{ total }}</td>
+      </tr>
+    </table>
+    <p class="note">Total includes FOB price ${{ car.price_fob }} in Japan plus
+    shipping and insurance ${{ ship_cost }} to {{ port }}.
+    Pay safely by bank transfer only to our company account in Japan.
+    Never pay to a person.</p>
+
+    <h2>BANKING DETAILS</h2>
+    <div class="bank">
+      <div>
+        <p><strong>Name:</strong> The Bank Of Tokyo Mitsubishi UFJ Ltd.</p>
+        <p><strong>Soka Branch:</strong> Branch No. 291</p>
+        <p><strong>Account Number:</strong> 1201266</p>
+        <p><strong>Account Holder:</strong> Afridi Trading</p>
+        <p><strong>Swift Code:</strong> BOTKJPJT</p>
+        <p><strong>Address:</strong> 2-7-1 TAKASAGO AREA CODE 340-0015 Saitama, Japan</p>
+      </div>
+      <div>
+        <p><strong>Intermediary bank in USA to be used (if requested by your bank)</strong></p>
+        <p><strong>Bankers:</strong> The Bank of Tokyo-Mitsubishi UFJ, Ltd</p>
+        <p><strong>Branch Name:</strong> New York Branch</p>
+        <p><strong>Bank Address:</strong> 1251 Avenue of the Americas, New York, NY 10020-1104, USA</p>
+        <p><strong>Swift Code:</strong> BOTKUS33</p>
+      </div>
+    </div>
+
+    <p class="verify">SCAN TO VERIFY</p>
+    {% if qr_data_uri %}
+    <p class="qr"><img src="{{ qr_data_uri }}" alt="QR code for this invoice" width="180" height="180"></p>
+    <p class="qr-url">{{ invoice_url }}</p>
+    {% endif %}
+  </div>
+
+  <div class="actions">
+    <button class="btn" onclick="window.print()">Print invoice</button>
+    <a class="btn dark" href="/cars">Back to cars</a>
+    <a class="btn dark" href="/">Ask the bot</a>
+  </div>
+</body>
+</html>

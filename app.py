@@ -25,6 +25,17 @@ try:
 except Exception:  # noqa: BLE001 - any import problem means no Supabase
     _sb_create_client = None
 
+# QR codes for invoices. Guarded the same way: if the qrcode
+# package is missing, invoices still work, just without a QR.
+try:
+    import qrcode
+except Exception:  # noqa: BLE001 - any import problem means no QR
+    qrcode = None
+
+# The live site address. Every invoice QR encodes its own live
+# invoice page, so a scan opens that exact invoice for checking.
+LIVE_SITE = "https://afridi-trading-bot.vercel.app"
+
 app = Flask(__name__)
 # Secret key for sign-in sessions. On Vercel set SECRET_KEY in the
 # project settings; the default below is only for local testing.
@@ -1540,16 +1551,57 @@ def cars():
                            make_logos=MAKE_LOGOS)
 
 
+def make_qr_data_uri(text):
+    """Make a QR code picture for one short text (an invoice URL)
+    and return it as a data URI, so the invoice page can show it
+    with no file to upload and no outside website involved.
+    Returns None if the qrcode package is not installed."""
+    if qrcode is None:
+        return None
+    import base64
+    import io
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                       box_size=8, border=2)
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return ("data:image/png;base64,"
+            + base64.b64encode(buf.getvalue()).decode("ascii"))
+
+
 @app.route("/invoice/<int:car_id>")
 def invoice(car_id):
-    """Invoice page for one car."""
+    """Proforma invoice page for one car, in the same format as
+    the real Afridi Trading invoice. No customer or consignee
+    details are shown anywhere on this page — only the company
+    (BILL FROM), the vehicle and the bank details. The bot has no
+    chassis number and no deposit ratio, so those cells show "—"
+    instead of a made-up value. The QR code under SCAN TO VERIFY
+    is made automatically for this invoice only: scanning it
+    opens this exact invoice page, so anyone can check it is real.
+    The QR holds only the invoice web address — no personal
+    details of any kind."""
     db = get_db()
     car = db.execute("SELECT * FROM cars WHERE id = ?",
                      (car_id,)).fetchone()
     if car is None:
         return "Car not found.", 404
     total, port = delivered_price(car, "jamaica")
-    return render_template("invoice.html", car=car, total=total, port=port)
+    fob = _col(car, "price_fob") or 0
+    today = datetime.now(timezone.utc).date()
+    valid = today + timedelta(days=14)
+    invoice_url = "%s/invoice/%d" % (LIVE_SITE, car_id)
+    return render_template(
+        "invoice.html", car=car, total=total, port=port,
+        ship_cost=total - fob,
+        invoice_no="ATJ-%04d" % car_id,
+        issue_date=today.isoformat(),
+        valid_date=valid.isoformat(),
+        due_date=valid.isoformat(),
+        invoice_url=invoice_url,
+        qr_data_uri=make_qr_data_uri(invoice_url))
 
 
 @app.route("/track")
