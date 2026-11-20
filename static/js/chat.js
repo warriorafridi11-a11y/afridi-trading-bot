@@ -50,6 +50,20 @@ function hideTyping() {
   if (row) row.remove();
 }
 
+function addPhoto(url) {
+  const row = document.createElement("div");
+  row.className = "msg-row bot";
+  const img = document.createElement("img");
+  img.className = "chat-photo";
+  img.src = url;
+  img.alt = "Photo of the car";
+  img.loading = "lazy";
+  img.onerror = function () { row.remove(); };
+  row.appendChild(img);
+  box.appendChild(row);
+  scrollDown();
+}
+
 async function sendMessage(text) {
   addMessage(text, "user");
   showTyping();
@@ -62,6 +76,7 @@ async function sendMessage(text) {
     const data = await res.json();
     hideTyping();
     addMessage(data.reply, "bot");
+    if (data.photo) addPhoto(data.photo);
   } catch (err) {
     hideTyping();
     addMessage("Sorry, I could not reach the bot. Please try again.", "bot");

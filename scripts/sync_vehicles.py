@@ -44,6 +44,15 @@ PER_PAGE = 24
 #   <a href="/car-detail/AA35371">2021 Suzuki Solio MV</a>
 #   <p ...specs">33,000 km · 1200cc · AT · Hybrid</p>
 #   <span ...priceMain">$10,550</span>
+# The page also hides the full car data as JSON (NEXT_DATA), with
+# the photo link, the auction grade and all the specs. The JSON is
+# the better source: one car object has image, auction_grade,
+# stock_id (the ref, e.g. AA35371), make, model, version (trim),
+# manufacturing_year, mileage_km, fob_price_currency_to and fuel.
+# The old HTML pattern below is only a fallback, for a day when
+# the JSON is missing. Grades are rare on the site: most cars
+# have no grade at all, so auction_grade stays empty (None) for
+# them — the bot never invents a grade.
 CARD_RE = re.compile(
     r'href="/car-detail/([A-Za-z0-9]+)">(\d{4})\s+([^<]+)</a>'
     r'.*?<p[^>]*__specs">([^<]*)</p>'
@@ -51,6 +60,29 @@ CARD_RE = re.compile(
     re.DOTALL,
 )
 KM_RE = re.compile(r"([\d,]+)\s*km")
+NEXT_DATA_RE = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+    re.DOTALL,
+)
+
+# Fuel words from the site, kept the same as the old seed data:
+# the listing text says "Light Oil" for diesel cars.
+FUEL_TAG = {"HYBRID": "Hybrid", "DIESEL": "Light Oil"}
+
+
+def _title_make(raw):
+    """Make name in the same shape as the old seed data."""
+    name = raw.strip().title()
+    if name == "Bmw":
+        return "BMW"
+    return name
+
+
+def _model_name(raw_model, version):
+    """Model + trim, like the listing title: 'Solio MV'."""
+    model = raw_model.strip().title()
+    trim = (version or "").strip()
+    return f"{model} {trim}".strip() if trim else model
 
 
 def fetch_page(page):
@@ -64,6 +96,38 @@ def fetch_page(page):
 
 def parse_cars(html):
     """Turn one page of HTML into a list of car dicts."""
+    found = NEXT_DATA_RE.search(html)
+    if found:
+        try:
+            data = json.loads(found.group(1))
+            cars = []
+            for item in data["props"]["pageProps"]["data"]:
+                cars.append({
+                    "ref": item.get("stock_id"),
+                    "make": _title_make(item.get("make") or ""),
+                    "model": _model_name(item.get("model") or "",
+                                         item.get("version")),
+                    "year": int(item.get("manufacturing_year") or 0),
+                    "distance_km": item.get("mileage_km"),
+                    "price_fob": int(item.get("fob_price_currency_to") or 0),
+                    "body_type": FUEL_TAG.get(
+                        (item.get("fuel") or "").upper(), ""),
+                    "status": "In stock"
+                    if (item.get("status") or "").upper() == "AVAILABLE"
+                    else "In stock",
+                    # Auction grade from the site, or None: most cars
+                    # have no grade, and the bot never invents one.
+                    "auction_grade": item.get("auction_grade") or None,
+                    # Main photo of the car, from the site.
+                    "image_url": item.get("image") or None,
+                    # The site lists no condition note per car, so
+                    # this stays empty unless the site adds one.
+                    "condition_note": None,
+                })
+            if cars:
+                return cars
+        except Exception:  # noqa: BLE001 - fall back to the HTML pattern
+            pass
     cars = []
     for ref, year, title, specs, price in CARD_RE.findall(html):
         title = title.strip()
@@ -83,26 +147,45 @@ def parse_cars(html):
             "price_fob": int(price.replace(",", "")),
             "body_type": fuel,  # the listing shows fuel, not body type
             "status": "In stock",
+            "auction_grade": None,
+            "image_url": None,
+            "condition_note": None,
         })
     return cars
 
 
-def crawl(max_pages):
-    """Fetch stock pages. max_pages 0 means all pages."""
-    cars, page = [], 1
+def crawl(max_pages, start_page=1):
+    """Fetch stock pages. max_pages 0 means all pages.
+    Waits 3 seconds between pages, so the website does not block
+    us. On error 429 (too many requests) the run stops at once."""
+    import time
+    cars, page = [], start_page
     while True:
-        if max_pages and page > max_pages:
+        if max_pages and page > start_page + max_pages - 1:
             break
         try:
             found = parse_cars(fetch_page(page))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                print(f"STOP: page {page} got error 429 (too many "
+                      "requests). The run stops here — try again later.")
+            else:
+                print(f"STOP: page {page} could not be read: {exc}")
+            break
         except Exception as exc:  # noqa: BLE001 - one bad page ends the crawl
             print(f"STOP: page {page} could not be read: {exc}")
             break
         if not found:
+            print(f"STOP: page {page} had no cars.")
             break
         cars.extend(found)
-        print(f"Page {page}: {len(found)} cars")
+        grades = sum(1 for c in found if c.get("auction_grade"))
+        photos = sum(1 for c in found if c.get("image_url"))
+        print(f"Page {page}: {len(found)} cars, {grades} with a grade,"
+              f" {photos} with a photo")
         page += 1
+        if max_pages and page <= start_page + max_pages - 1:
+            time.sleep(3)
     return cars
 
 
@@ -135,13 +218,21 @@ def main():
     args = argparse.ArgumentParser()
     args.add_argument("--max-pages", type=int, default=10,
                       help="How many stock pages to read. 0 = all pages.")
+    args.add_argument("--start-page", type=int, default=1,
+                      help="First stock page to read (default 1).")
+    args.add_argument("--out", default=None,
+                      help="Also save the crawled cars to this JSON file.")
     args.add_argument("--dry-run", action="store_true",
                       help="Look only, change nothing in Supabase.")
     opts = args.parse_args()
 
     print(f"SYNC START: {datetime.now(timezone.utc).isoformat()}")
-    cars = crawl(opts.max_pages)
+    cars = crawl(opts.max_pages, start_page=opts.start_page)
     print(f"Found {len(cars)} cars on the website.")
+    if opts.out:
+        with open(opts.out, "w", encoding="utf-8") as handle:
+            json.dump(cars, handle, ensure_ascii=False)
+        print(f"Saved {len(cars)} cars to {opts.out}.")
     if opts.dry_run:
         for car in cars[:5]:
             print("  sample:", car)
@@ -157,6 +248,8 @@ def main():
 
     # The cars table needs a ref column for safe matching. If it is
     # missing, the seed SQL (supabase seed file) must be run first.
+    # It also needs the auction_grade, image_url and condition_note
+    # columns — see afridi-trading-bot-add-columns.sql.
     try:
         sb_request("GET", "/cars?select=ref&limit=1")
     except RuntimeError as exc:
@@ -168,7 +261,8 @@ def main():
 
     existing = sb_request(
         "GET", "/cars?select=id,ref,make,model,year,distance_km,"
-        "price_fob,body_type,status&limit=10000")
+        "price_fob,body_type,status,auction_grade,image_url,"
+        "condition_note&limit=10000")
 
     def key(car):
         if car.get("ref"):
@@ -187,8 +281,13 @@ def main():
             new += 1
         else:
             changes = {}
-            for field in ("distance_km", "price_fob", "body_type"):
-                if car[field] != old.get(field):
+            for field in ("distance_km", "price_fob", "body_type",
+                          "auction_grade", "image_url", "condition_note"):
+                if car.get(field) != old.get(field):
+                    # Never wipe a grade or photo the table already has.
+                    if field in ("auction_grade", "image_url",
+                                 "condition_note") and car.get(field) is None:
+                        continue
                     changes[field] = car[field]
             if old.get("status") in ("sold", "Sold"):
                 changes["status"] = "In stock"

@@ -14,6 +14,11 @@
 <div class="car-grid">
   {% for car in cars %}
   <article class="car-card">
+    {% if car.image_url %}
+    <img class="car-photo" src="{{ car.image_url }}" alt="{{ car.make }} {{ car.model }} {{ car.year }}" loading="lazy" onerror="this.style.display='none'">
+    {% else %}
+    <div class="car-photo-empty">No photo yet — ask sales for photos of this car.</div>
+    {% endif %}
     <div class="car-top">
       <h3>{{ car.make }} {{ car.model }}</h3>
       <small>{{ car.body_type or 'Used car' }} · Afridi Trading Japan</small>
@@ -24,8 +29,10 @@
         <span class="badge">{{ car.year }}</span>
         {% if car.distance_km %}<span class="badge">{{ car.distance_km }} km</span>{% endif %}
         {% if car.body_type %}<span class="badge">{{ car.body_type }}</span>{% endif %}
+        {% if car.auction_grade %}<span class="badge grade">Grade {{ car.auction_grade }}</span>{% endif %}
         <span class="badge {% if car.status == 'available' %}green{% else %}red{% endif %}">{{ car.status }}</span>
       </div>
+      {% if car.condition_note %}<p class="car-note">{{ car.condition_note }}</p>{% endif %}
       <div class="car-actions">
         <a class="btn" href="/?ask=How much is the {{ car.make }} {{ car.model }} {{ car.year }}?">Ask the bot about this car</a>
         <a class="btn btn-dark" href="/invoice/{{ car.id }}">Invoice</a>

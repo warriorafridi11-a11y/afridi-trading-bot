@@ -82,6 +82,20 @@ Repeated questions do not go to the database every time. After
 5 minutes the cache refreshes, so new data shows up soon. No Redis,
 no extra service. See the cache hits and misses on `/health`.
 
+## Car photos and auction grades
+
+Every car card on `/cars` shows the car's real photo from
+afriditrading.com, with the auction grade next to the year and
+mileage when the site lists one (for example "Grade 4.5"). Most
+cars on the site have no grade at all — the bot never invents
+one, and says so honestly when a buyer asks. When the bot
+answers about one car in chat, it tells the grade in simple
+words ("Grade 4.5 — very good shape, a few small marks only")
+and the mileage, and the chat shows the car's photo under the
+answer. Cars with no photo show a plain grey box, never a
+broken image. The photo link, grade and condition note live in
+the cars table (`image_url`, `auction_grade`, `condition_note`).
+
 ## Pages
 
 - `/` — home page with the chat window
@@ -143,19 +157,29 @@ changed, and marks cars that are gone from the website as `sold`
 The bot's cache refreshes within 5 minutes, so the new data shows
 up in the bot soon after the sync runs.
 
+The script reads the full car data the listing page hides as JSON:
+the photo link, the auction grade, the website reference, the
+trim, the mileage and the fuel. It waits 3 seconds between pages
+and stops at once on error 429 (too many requests).
+
 Exact commands (run from the repo folder):
 
 - Look only, change nothing:
   `python3 scripts/sync_vehicles.py --dry-run --max-pages 2`
 - Normal daily run (first 10 pages):
   `SUPABASE_URL=https://jlbapnqzntqlyjuqvtmq.supabase.co SUPABASE_ANON_KEY=<anon key> python3 scripts/sync_vehicles.py`
+- Crawl more pages, starting at a later page, and save the cars
+  to a file as well:
+  `SUPABASE_URL=https://jlbapnqzntqlyjuqvtmq.supabase.co SUPABASE_ANON_KEY=<anon key> python3 scripts/sync_vehicles.py --start-page 38 --max-pages 47 --out /tmp/new_cars.json`
 - Full sync (all pages — this is the one that marks sold cars):
   `SUPABASE_URL=https://jlbapnqzntqlyjuqvtmq.supabase.co SUPABASE_ANON_KEY=<anon key> python3 scripts/sync_vehicles.py --max-pages 0`
 
 The script prints a summary at the end: `new=X updated=Y marked
 sold=Z`, plus the sync time. No schedule is set up in this repo —
 the daily schedule will be set up separately. The Supabase cars
-table needs a `ref` column first (the seed SQL file adds it).
+table needs a `ref` column first (the seed SQL file adds it), plus
+the `auction_grade`, `image_url` and `condition_note` columns
+(see `afridi-trading-bot-add-columns.sql` in your_files).
 
 ## Crawl queue — getting ALL the cars, slowly
 
@@ -169,7 +193,7 @@ Script: `scripts/crawl_queue.py` (plain Python, no extra package).
 Table: `crawl_queue` in the same SQLite database as the bot
 (`bot.db`) — same table and column names will be used in Supabase
 later, so moving is easy. New cars are saved in the database AND
-added to the seed list in `app.py`, so the live bot gets them on
+added to the seed list in `seed_data.py`, so the live bot gets them on
 the next deploy. If a page fails (for example error 429), the run
 stops at once, the page is marked failed, and it is tried again
 next time. After 3 failed tries a page is left alone for a human.
@@ -198,14 +222,15 @@ real queue lives where the worker runs.
 
 The bot's seed data is real data from afriditrading.com, not made up:
 
-- **317 cars**: the 10 original demo cars + 307 real cars read from
-  the stock pages 1–13 (24 cars per page). The site has 38,236 cars
-  on 1,594 pages, so this is a real sample of the newest listings,
-  not the whole stock. Stock pages 14–16 were blocked by the site's
-  rate limit on the day of the crawl. Every car has a real FOB price;
-  no price was invented. The listing pages show a fuel tag (Hybrid /
-  Light Oil / Diesel) but no body-type field, so `body_type` holds
-  the fuel tag.
+- **1,958 cars**: the 10 original demo cars + 1,948 real cars read
+  from the stock pages 1–82 (24 cars per page, Nov 2026). The site
+  has 38,236 cars on 1,594 pages, so this is a real sample of the
+  newest listings, not the whole stock. Every car has a real FOB
+  price and its real photo link; no price was invented. 927 of
+  them have a real auction grade from the site (most cars have no
+  grade at all — the bot never invents one). The listing pages
+  show a fuel tag (Hybrid / Light Oil / Diesel) but no body-type
+  field, so `body_type` holds the fuel tag.
 - **77 countries' import rules**: max car age, port, shipping time,
   sailings, inspection and shipping line, read from
   afriditrading.com/import and each country page. 6 countries
@@ -238,7 +263,7 @@ variables, never in code), the bot reads and writes Supabase project
 `jlbapnqzntqlyjuqvtmq` instead of the local SQLite file — users,
 cars, chats, messages, inquiries, invoices, shipments, import rules,
 reviews, FAQs and the crawl queue. The first start seeds Supabase
-from the same seed data (317 cars, 77 import rules, 20 FAQs) and
+from the same seed data (1,958 cars, 77 import rules, 20 FAQs) and
 adds the sample shipment ATJ-1001, only adding what is missing.
 When the two settings are not set, the bot uses SQLite, as before.
 If Supabase is set but the startup test read fails (for example the

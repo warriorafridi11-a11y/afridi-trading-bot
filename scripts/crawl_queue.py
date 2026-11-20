@@ -19,7 +19,7 @@ How it works:
   pages from the queue, waits 3 seconds between pages (polite, so
   the website does not block us), and saves every car it finds.
   New cars are added to the cars table AND to the seed list in
-  app.py, so the live bot gets them on the next deploy.
+  seed_data.py, so the live bot gets them on the next deploy.
 - If a page fails (for example error 429 = "too many requests"),
   that page is marked failed, the run STOPS at once, and the page
   stays in the queue to try again next time. After 3 failed tries
@@ -83,7 +83,8 @@ CARS_SQL = """
 CREATE TABLE IF NOT EXISTS cars (
     id INTEGER PRIMARY KEY, make TEXT, model TEXT, year INTEGER,
     distance_km INTEGER, price_fob INTEGER, body_type TEXT,
-    status TEXT, ref TEXT
+    status TEXT, ref TEXT, auction_grade TEXT, image_url TEXT,
+    condition_note TEXT
 );
 """
 
@@ -98,6 +99,11 @@ def open_db(db_path):
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     db.executescript(QUEUE_SQL + CARS_SQL)
+    # Old database files may miss the new columns: add them.
+    cols = [r[1] for r in db.execute("PRAGMA table_info(cars)")]
+    for col in ("auction_grade", "image_url", "condition_note"):
+        if col not in cols:
+            db.execute(f"ALTER TABLE cars ADD COLUMN {col} TEXT")
     db.commit()
     return db
 
@@ -157,11 +163,11 @@ def seed_key(car):
             car["distance_km"], car["price_fob"])
 
 
-def load_seed_keys(app_py):
-    """Read the cars already in the app.py seed list."""
+def load_seed_keys(seed_py):
+    """Read the cars already in the seed_data.py seed list."""
     keys = set()
     try:
-        with open(app_py, encoding="utf-8") as handle:
+        with open(seed_py, encoding="utf-8") as handle:
             text = handle.read()
     except OSError:
         return keys
@@ -173,7 +179,7 @@ def load_seed_keys(app_py):
     for line in block.splitlines():
         line = line.strip().strip(",").strip('"')
         parts = line.split("|")
-        if len(parts) == 7:
+        if len(parts) >= 7:
             try:
                 keys.add((parts[0], parts[1], int(parts[2]),
                           int(parts[3]) if parts[3] else None,
@@ -183,31 +189,37 @@ def load_seed_keys(app_py):
     return keys
 
 
-def append_to_seed(app_py, cars):
-    """Add new cars to the SAMPLE_CARS list in app.py, so the live
-    bot gets them on the next deploy. Returns how many were added."""
-    keys = load_seed_keys(app_py)
+def append_to_seed(seed_py, cars):
+    """Add new cars to the SAMPLE_CARS list in seed_data.py, so
+    the live bot gets them on the next deploy. New lines carry
+    the ref, auction grade and photo link too. Returns how many
+    were added."""
+    keys = load_seed_keys(seed_py)
     new_lines = []
     for car in cars:
         if seed_key(car) in keys:
             continue
         km = "" if car["distance_km"] is None else str(car["distance_km"])
+        grade = car.get("auction_grade") or ""
+        image = car.get("image_url") or ""
+        ref = car.get("ref") or ""
         new_lines.append(
             f'    "{car["make"]}|{car["model"]}|{car["year"]}|{km}|'
-            f'{car["price_fob"]}|{car["body_type"]}|{car["status"]}",')
+            f'{car["price_fob"]}|{car["body_type"]}|{car["status"]}|'
+            f'{ref}|{grade}|{image}",')
         keys.add(seed_key(car))
     if not new_lines:
         return 0
-    with open(app_py, encoding="utf-8") as handle:
+    with open(seed_py, encoding="utf-8") as handle:
         text = handle.read()
     start = text.find("SAMPLE_CARS = [")
     end = text.find("\n]\n", start)
     if start < 0 or end < 0:
-        print("WARNING: could not find SAMPLE_CARS in app.py, so the"
-              " new cars were saved in the database only.")
+        print("WARNING: could not find SAMPLE_CARS in seed_data.py, so"
+              " the new cars were saved in the database only.")
         return 0
     text = text[:end] + "\n" + "\n".join(new_lines) + text[end:]
-    with open(app_py, "w", encoding="utf-8") as handle:
+    with open(seed_py, "w", encoding="utf-8") as handle:
         handle.write(text)
     return len(new_lines)
 
@@ -232,16 +244,25 @@ def upsert_cars(db, cars):
         if old is None:
             db.execute(
                 "INSERT INTO cars (make, model, year, distance_km,"
-                " price_fob, body_type, status, ref)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " price_fob, body_type, status, ref, auction_grade,"
+                " image_url, condition_note)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (car["make"], car["model"], car["year"],
                  car["distance_km"], car["price_fob"],
-                 car["body_type"], car["status"], car.get("ref")))
+                 car["body_type"], car["status"], car.get("ref"),
+                 car.get("auction_grade"), car.get("image_url"),
+                 car.get("condition_note")))
             new += 1
         else:
             changes = {}
-            for field in ("distance_km", "price_fob", "body_type"):
-                if car[field] != old[field]:
+            for field in ("distance_km", "price_fob", "body_type",
+                          "auction_grade", "image_url", "condition_note"):
+                if car.get(field) != old[field]:
+                    # Never wipe a grade or photo already saved.
+                    if field in ("auction_grade", "image_url",
+                                 "condition_note") \
+                            and car.get(field) is None:
+                        continue
                     changes[field] = car[field]
             if old["status"] in ("sold", "Sold"):
                 changes["status"] = "In stock"
@@ -256,7 +277,7 @@ def upsert_cars(db, cars):
     return new, updated
 
 
-def run_worker(db, app_py, pages, delay, no_seed, fetch=None):
+def run_worker(db, seed_py, pages, delay, no_seed, fetch=None):
     """Crawl the next N pages from the queue. Stops at once if a
     page fails. Returns (done, added, updated, failed)."""
     fetch = fetch or fetch_page
@@ -289,7 +310,7 @@ def run_worker(db, app_py, pages, delay, no_seed, fetch=None):
             failed += 1
             break
         new, upd = upsert_cars(db, found)
-        seeded = 0 if no_seed else append_to_seed(app_py, found)
+        seeded = 0 if no_seed else append_to_seed(seed_py, found)
         db.execute(
             "UPDATE crawl_queue SET status = 'done', done_at = ?"
             " WHERE id = ?", (now_text(), row["id"]))
@@ -316,7 +337,7 @@ def main():
     args.add_argument("--delay", type=int, default=DEFAULT_DELAY,
                       help="Seconds to wait between pages.")
     args.add_argument("--no-seed", action="store_true",
-                      help="Do not add new cars to the app.py seed list.")
+                      help="Do not add new cars to the seed_data.py seed list.")
     args.add_argument("--status", action="store_true",
                       help="Show the queue status and stop.")
     args.add_argument("--db", default=None,
@@ -327,7 +348,7 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(here)
     db_path = opts.db or os.path.join(repo, "bot.db")
-    app_py = os.path.join(repo, "app.py")
+    seed_py = os.path.join(repo, "seed_data.py")
     db = open_db(db_path)
 
     if opts.status:
@@ -337,7 +358,7 @@ def main():
         fill_queue(db, already_done=opts.already_done)
         queue_status(db)
         return 0
-    run_worker(db, app_py, opts.pages, opts.delay, opts.no_seed)
+    run_worker(db, seed_py, opts.pages, opts.delay, opts.no_seed)
     return 0
 
 

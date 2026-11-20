@@ -480,6 +480,64 @@ def _chunks(rows, size=100):
         yield rows[start:start + size]
 
 
+def _seed_cars(client, new_cars):
+    """Insert new seed cars. If the Supabase cars table does not
+    have the new columns yet (ref, auction_grade, image_url,
+    condition_note — added by afridi-trading-bot-add-columns.sql),
+    the full insert fails, so try again with only the old columns.
+    The cars still get added; the grade and photo are filled in
+    later by _backfill_car_details, once the columns exist."""
+    if not new_cars:
+        return
+    try:
+        for chunk in _chunks(new_cars):
+            client.table("cars").insert(chunk).execute()
+    except Exception as exc:  # noqa: BLE001 - columns may not exist yet
+        print("Seed with new columns failed, retrying with old "
+              f"columns only: {str(exc)[:150]}", flush=True)
+        old_fields = ("make", "model", "year", "distance_km",
+                      "price_fob", "body_type", "status")
+        plain = [{k: car[k] for k in old_fields} for car in new_cars]
+        for chunk in _chunks(plain):
+            client.table("cars").insert(chunk).execute()
+
+
+def _backfill_car_details(client):
+    """Fill in grade, photo and ref for cars already in Supabase
+    that are missing them. Only rows the seed knows about, and
+    only fields that are empty — so it does nothing on later
+    starts. Skipped quietly if the columns do not exist yet."""
+    try:
+        have = client.table("cars").select(
+            "id,make,model,year,price_fob,ref,auction_grade,"
+            "image_url,condition_note").execute().data
+    except Exception:  # noqa: BLE001 - new columns may not exist yet
+        return
+    by_key = {(r["make"], r["model"], r["year"], r["price_fob"]): r
+              for r in have}
+    fixed = 0
+    for row in seed_car_rows():
+        key = (row[0], row[1], row[2], row[4])
+        old = by_key.get(key)
+        if old is None:
+            continue
+        changes = {}
+        for field, value in (("ref", row[7]), ("auction_grade", row[8]),
+                             ("image_url", row[9]),
+                             ("condition_note", row[10])):
+            if value is not None and not old.get(field):
+                changes[field] = value
+        if changes:
+            try:
+                client.table("cars").update(changes).eq(
+                    "id", old["id"]).execute()
+                fixed += 1
+            except Exception:  # noqa: BLE001 - keep going car by car
+                continue
+    if fixed:
+        print(f"Backfilled grade/photo for {fixed} cars.", flush=True)
+
+
 def init_supabase():
     """Seed Supabase if it is empty. The tables already exist
     (made in the Supabase dashboard). Only adds what is missing,
@@ -496,10 +554,16 @@ def init_supabase():
             new_cars.append({"make": row[0], "model": row[1],
                              "year": row[2], "distance_km": row[3],
                              "price_fob": row[4], "body_type": row[5],
-                             "status": row[6]})
+                             "status": row[6], "ref": row[7],
+                             "auction_grade": row[8],
+                             "image_url": row[9],
+                             "condition_note": row[10]})
             have.add(key)
-    for chunk in _chunks(new_cars):
-        client.table("cars").insert(chunk).execute()
+    _seed_cars(client, new_cars)
+    # Fill in grade and photo for cars that are already there but
+    # were saved before those columns existed. Only touches rows
+    # that are missing the data, so later starts do nothing.
+    _backfill_car_details(client)
     # Import rules: upsert by country (country is UNIQUE), so the
     # seed values fix any old wrong age limits.
     rules = [{"country": c, "max_car_age_years": a, "notes": n}
@@ -567,7 +631,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS cars (
             id INTEGER PRIMARY KEY, make TEXT, model TEXT, year INTEGER,
             distance_km INTEGER, price_fob INTEGER, body_type TEXT,
-            status TEXT);
+            status TEXT, ref TEXT, auction_grade TEXT, image_url TEXT,
+            condition_note TEXT);
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY, user_id INTEGER,
             started_at TEXT, status TEXT);
@@ -612,12 +677,18 @@ def init_db():
     car_cols = [r[1] for r in db.execute("PRAGMA table_info(cars)")]
     if "ref" not in car_cols:
         db.execute("ALTER TABLE cars ADD COLUMN ref TEXT")
+    # Grade, photo and condition note, from the website listing.
+    # Most cars have no grade on the site, so it stays empty.
+    for col in ("auction_grade", "image_url", "condition_note"):
+        if col not in car_cols:
+            db.execute(f"ALTER TABLE cars ADD COLUMN {col} TEXT")
     # Add sample cars only the first time, when the table is empty.
     count = db.execute("SELECT COUNT(*) FROM cars").fetchone()[0]
     if count == 0:
         db.executemany(
             "INSERT INTO cars (make, model, year, distance_km, price_fob,"
-            " body_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " body_type, status, ref, auction_grade, image_url,"
+            " condition_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             seed_car_rows())
     # Add import rules only when that table is empty, so new rules are
     # added even if the cars table already has rows.
@@ -644,6 +715,43 @@ def init_db():
             " 'buyer')")
     db.commit()
     db.close()
+
+
+def _col(row, name):
+    """Read one column from a database row, safely. Rows from
+    Supabase are dicts; rows from SQLite are sqlite3.Row. Old
+    rows may not have the new columns at all, so a missing column
+    just gives None instead of an error."""
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def car_condition_text(car):
+    """One short sentence about a car's condition, in simple
+    words, using only what the website actually says. The grade
+    comes from the auction sheet on the site; most cars have no
+    grade, so then only the mileage is told. Never invents a
+    grade or a condition."""
+    parts = []
+    grade = _col(car, "auction_grade")
+    if grade:
+        meaning = GRADES.get(str(grade).lower(), "")
+        # GRADES text starts with "Grade 4.5 means ..." — drop that
+        # start, so the sentence does not say the grade twice.
+        meaning = re.sub(r"^Grade \S+ means ", "", meaning)
+        if meaning:
+            parts.append(f"Auction grade {grade} — {meaning}")
+        else:
+            parts.append(f"Auction grade {grade}.")
+    note = _col(car, "condition_note")
+    if note:
+        parts.append(note)
+    km = _col(car, "distance_km")
+    if km:
+        parts.append(f"It has run {km:,} km.")
+    return " ".join(parts)
 
 
 def find_car(text):
@@ -793,6 +901,20 @@ def bot_reply(text, chat_id, user_id=None):
         return ("Which car do you want an invoice for? "
                 "For example: invoice for the Toyota Aqua.")
 
+    # 3a. Condition of one car: "what is the condition of the Aqua"
+    # or "what grade is the Aqua". Only what the site says.
+    if "condition" in msg or ("grade" in msg and "what is grade" not in msg):
+        car = find_car(msg)
+        if car:
+            detail = car_condition_text(car)
+            if detail:
+                return (f"The {car['make']} {car['model']} "
+                        f"{car['year']}: {detail}")
+            return (f"The {car['make']} {car['model']} {car['year']} "
+                    "has no auction grade on the website, so I cannot "
+                    "tell its grade. Ask our sales team and they will "
+                    "check the auction sheet for you.")
+
     # 3. Explain an auction grade: "what is grade 4"
     if "grade" in msg or "auction sheet" in msg:
         # Match the exact grade named, e.g. "grade 4" or "grade s".
@@ -888,6 +1010,7 @@ def bot_reply(text, chat_id, user_id=None):
     car = find_car(msg)
     if car and ("how much" in msg or "price" in msg or "cost" in msg
                 or "delivered" in msg or "to " in msg):
+        detail = car_condition_text(car)
         for country in SHIPPING:
             if country in msg:
                 total, port = delivered_price(car, country)
@@ -895,9 +1018,11 @@ def bot_reply(text, chat_id, user_id=None):
                         f"is ${car['price_fob']} in Japan. "
                         f"The delivered price to {port} is ${total} "
                         f"(shipping + ${INSURANCE} insurance). "
+                        + (detail + " " if detail else "") +
                         f"Do you want an invoice for this car? Yes / No.")
         return (f"The {car['make']} {car['model']} {car['year']} is "
                 f"${car['price_fob']} in Japan. "
+                + (detail + " " if detail else "") +
                 f"Tell me your country and I will tell you the "
                 f"delivered price.")
 
@@ -975,7 +1100,7 @@ def bot_reply(text, chat_id, user_id=None):
                 "sure they match the details on the auction sheet. Our "
                 "skilled team also inspects cars before we bid on them.")
     if "how many cars" in msg or "stock" in msg:
-        return ("We have over 1,000 cars in our regular stock, and "
+        return ("We have over 2,000 cars in our regular stock, and "
                 "about 100,000 cars each week through the Japan "
                 "auctions. Tell me a make or a budget and I will show "
                 "you cars.")
@@ -1345,7 +1470,9 @@ def track():
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
-    """Chat API. JavaScript sends a message, the bot answers as JSON."""
+    """Chat API. JavaScript sends a message, the bot answers as JSON.
+    If the question is about one car that has a photo, the photo
+    link is sent too, so the chat can show the car."""
     data = request.get_json(force=True)
     text = (data.get("message") or "").strip()
     if not text:
@@ -1354,7 +1481,12 @@ def api_chat():
     # Only signed-in users get their chat history saved.
     user = current_user()
     if user is None:
-        return jsonify({"reply": bot_reply(text, None, None)})
+        reply = bot_reply(text, None, None)
+        answer = {"reply": reply}
+        photo = _car_photo(text)
+        if photo:
+            answer["photo"] = photo
+        return jsonify(answer)
     db = get_db()
     chat = db.execute(
         "SELECT id FROM chats WHERE user_id = ? AND status = 'Open'"
@@ -1374,7 +1506,21 @@ def api_chat():
     db.execute("INSERT INTO messages (chat_id, sender, text, created_at)"
                " VALUES (?, 'bot', ?, ?)", (chat["id"], reply, now))
     db.commit()
-    return jsonify({"reply": reply, "chat_id": chat["id"]})
+    answer = {"reply": reply, "chat_id": chat["id"]}
+    photo = _car_photo(text)
+    if photo:
+        answer["photo"] = photo
+    return jsonify(answer)
+
+
+def _car_photo(text):
+    """Photo link of the one car the question asks about, or None.
+    Only used for the chat reply — the photo itself is shown by
+    the chat window, never as a broken image."""
+    car = find_car(text.lower())
+    if car is None:
+        return None
+    return _col(car, "image_url")
 
 
 @app.route("/api/cars")
