@@ -9,7 +9,7 @@ import os
 import re
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import smtplib
 from email.message import EmailMessage
@@ -17,6 +17,13 @@ from email.message import EmailMessage
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
+
+# Supabase client. The import is guarded: if the supabase package
+# is not installed, the bot simply uses SQLite (see USE_SUPABASE).
+try:
+    from supabase import create_client as _sb_create_client
+except Exception:  # noqa: BLE001 - any import problem means no Supabase
+    _sb_create_client = None
 
 app = Flask(__name__)
 # Secret key for sign-in sessions. On Vercel set SECRET_KEY in the
@@ -33,6 +40,45 @@ if os.environ.get("VERCEL"):
     DB_FILE = "/tmp/bot.db"
 else:
     DB_FILE = os.path.join(os.path.dirname(__file__), "bot.db")
+
+# ---------- Supabase (the real shared database) ----------
+# When SUPABASE_URL and SUPABASE_ANON_KEY are set as environment
+# variables (never in code, never in GitHub), the bot reads and
+# writes Supabase instead of the local SQLite file. When they are
+# not set, the bot uses SQLite, exactly as before. The anon key is
+# a secret: it is only ever read from the environment.
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_ANON_KEY
+                    and _sb_create_client)
+# The last Supabase problem, if the startup test failed (None = ok).
+# Shown on /health so the admin can see why the bot is on SQLite.
+_SUPABASE_ERROR = None
+
+# The tables in Supabase, in the same names as the SQLite file.
+# Used for the admin "tables" count (PostgREST cannot ask
+# SQLite's sqlite_master table).
+SUPABASE_TABLES = ["users", "admins", "cars", "chats", "messages",
+                   "inquiries", "invoices", "shipments", "import_rules",
+                   "reviews", "faqs", "crawl_queue"]
+
+_sb_client = None
+
+
+def _get_sb_client():
+    """One shared Supabase client. Made once, reused after that."""
+    global _sb_client
+    if _sb_client is None:
+        # httpx (used by supabase-py) cannot parse bracketed IPv6
+        # addresses like [::1] in NO_PROXY, and fails with
+        # "Invalid port". Drop those entries; plain hostnames stay.
+        for name in ("NO_PROXY", "no_proxy"):
+            value = os.environ.get(name)
+            if value and "[" in value:
+                os.environ[name] = ",".join(
+                    p for p in value.split(",") if "[" not in p)
+        _sb_client = _sb_create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    return _sb_client
 
 # Simple shipping prices in US dollars, from Japan to each port.
 # These are sample prices for the demo, not live quotes.
@@ -59,583 +105,12 @@ GRADES = {
     "r": "Grade R means the car was repaired after an accident. Ask us before you buy it.",
 }
 
-# Sample cars, like the cars on afriditrading.com. Price is the FOB price.
-# Real cars from afriditrading.com (stock pages 1-13, 308 cars, Nov 2026). The first 10 are the original demo cars.
-# Price is the FOB price. body_type holds the fuel tag the listing shows (Hybrid / Light Oil / Diesel), because the listing shows no body-type field.
-# Real cars from afriditrading.com (stock pages 1-13, Nov 2026).
-# Compact form, one car per line: make|model|year|distance_km|
-# price_fob|body_type|status. Empty distance means the listing
-# showed no mileage. Price is the FOB price. body_type holds the
-# fuel tag the listing shows (Hybrid / Light Oil / Diesel),
-# because the listing shows no body-type field. The first 10 are
-# the original demo cars.
-SAMPLE_CARS = [
-    "Toyota|Aqua S|2016|140000|1600|Hybrid|In stock",
-    "Toyota|Aqua S|2014|172000|1500|Hybrid|In stock",
-    "Toyota|Vitz F|2011|255000|2750|Hatchback|In stock",
-    "Toyota|Vitz F|2014|32000|4000|Hatchback|In stock",
-    "Toyota|Voxy Hybrid X|2017|212000|6500|Minivan|In stock",
-    "Toyota|Corolla Axio|2017|128000|3300|Sedan|In stock",
-    "Honda|Vezel|2018|98000|4550|SUV|In stock",
-    "Honda|Fit|2016|115000|1150|Hatchback|In stock",
-    "Suzuki|Swift XG|2014|99000|2000|Hatchback|In stock",
-    "Toyota|Sienta Hybrid G|2016|277000|3100|Minivan|In stock",
-    "Suzuki|Solio MV|2021|33000|10550|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2023|14000|31050|Hybrid|In stock",
-    "Suzuki|Solio SZ|2022|6000|12350|Hybrid|In stock",
-    "Suzuki|Solio MV|2021|49000|10350|Hybrid|In stock",
-    "Suzuki|Solio MZ|2024|20000|14800|Hybrid|In stock",
-    "Suzuki|Solio MV|2025||16650|Hybrid|In stock",
-    "Suzuki|Solio MX|2024|15000|10700|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2024|24000|31150|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2021|25000|25700|Hybrid|In stock",
-    "Suzuki|Solio MV|2022|36000|11950|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2025|11000|32150|Hybrid|In stock",
-    "Honda|Odyssey Absolute|2022|72000|19050|Hybrid|In stock",
-    "Suzuki|Solio MV|2024|16000|11300|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2022|27000|26050|Hybrid|In stock",
-    "Suzuki|Solio MZ|2021|36000|8600||In stock",
-    "Suzuki|Solio MV|2021|3000|12350|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2023|25000|30700|Hybrid|In stock",
-    "Nissan|Skyline Nismo|2024|18000|40400||In stock",
-    "Suzuki|Solio MV|2022|31000|12150|Hybrid|In stock",
-    "Honda|Odyssey e:HEV Absolute EX|2022|20000|26800|Hybrid|In stock",
-    "Suzuki|Solio MV|2022|34000|12300|Hybrid|In stock",
-    "Suzuki|Solio MV|2018|14000|9450|Hybrid|In stock",
-    "Honda|Odyssey Absolute EX|2021|40000|22150|Hybrid|In stock",
-    "Toyota|Voxy S-Z|2024|16000|18800||In stock",
-    "Toyota|Voxy ZS Sparkle2|2016|107000|7600||In stock",
-    "Toyota|Raize Z|2020|49000|10500||In stock",
-    "Honda|Vezel Z Honda Sensing|2018|41000|8200|Hybrid|In stock",
-    "Honda|Freed air|2024|18000|15600|Hybrid|In stock",
-    "Honda|Freed closter|2024|19000|15800|Hybrid|In stock",
-    "Honda|Vezel Hybrid Z Honda Sensing|2018|73000|8800|Hybrid|In stock",
-    "Toyota|Raize Z|2020|51000|8100||In stock",
-    "Toyota|Voxy ZS Sparkle|2018|71000|13100|Hybrid|In stock",
-    "Honda|Fit Home|2022|34000|7900|Hybrid|In stock",
-    "Honda|Freed G black style|2022|39000|9400|Hybrid|In stock",
-    "BMW|X1 xDrive18d x line|2019|37000|9000|Light Oil|In stock",
-    "Toyota|Prado TX L package matte black Ed|2022|26000|25900||In stock",
-    "Lexus|UX F sports|2023|20000|19100||In stock",
-    "Toyota|Corolla Cross Z|2025|13000|16800|Hybrid|In stock",
-    "Lexus|RX elegant tourer|2022|13000|25300|Hybrid|In stock",
-    "Toyota|Voxy Hybrid S-Z|2022|38000|18500|Hybrid|In stock",
-    "Honda|Freed e:HEV air|2024|13000|16200|Hybrid|In stock",
-    "Lexus|ES F sports|2019|47000|20600|Hybrid|In stock",
-    "Toyota|Crown Sport Z|2023|27000|24700|Hybrid|In stock",
-    "Toyota|Hiace Van DX GL package|2022|58000|15900|Light Oil|In stock",
-    "Audi|Q3 35 TFSI S line|2022|28000|18100|Hybrid|In stock",
-    "Toyota|Corolla Cross Z|2023|57000|15800|Hybrid|In stock",
-    "Honda|Vezel Z|2022|46000|13500|Hybrid|In stock",
-    "Toyota|Raize Z|2025|8000|13500|Hybrid|In stock",
-    "Honda|Fit F package|2015|74000|3400|Hybrid|In stock",
-    "Toyota|Voxy Hybrid S-Z|2023|52000|19100|Hybrid|In stock",
-    "Toyota|Voxy S-Z|2023|26000|20000|Hybrid|In stock",
-    "Honda|Vezel Z|2021|47000|12400|Hybrid|In stock",
-    "Honda|Stepwgn Spada Cool Spirit H Sensing|2017|31000|14500||In stock",
-    "Toyota|Crown Sport Z E-Four|2024|20000|26400|Hybrid|In stock",
-    "BMW|X4 xDrive30i M Sport|2019|31000|20500||In stock",
-    "Toyota|Raize Z|2023|33000|11500||In stock",
-    "Honda|Stepwgn premium line|2024|27000|20300|Hybrid|In stock",
-    "Lexus|RX F sports|2021|56000|25300|Hybrid|In stock",
-    "Toyota|Voxy S-Z|2023|20000|19100||In stock",
-    "Honda|Vezel RS Honda Sensing|2018|82000|7800|Hybrid|In stock",
-    "Toyota|Voxy ZS Sparkle2|2019|36000|17000||In stock",
-    "Toyota|Corolla Cross Z|2024|26000|20000|Hybrid|In stock",
-    "Toyota|Voxy S-Z|2023|28000|19400||In stock",
-    "Lexus|NX Version L|2023|41000|27800|Hybrid|In stock",
-    "Toyota|Voxy ZS Sparkle|2016|76000|8500||In stock",
-    "Toyota|Voxy S-Z|2022|31000|18700||In stock",
-    "Honda|Vezel RS Honda Sensing|2019|39000|9500|Hybrid|In stock",
-    "Lexus|NX F sports|2022|22000|30300|Hybrid|In stock",
-    "Toyota|RAV4 adventure|2025|19000|22600|Hybrid|In stock",
-    "Honda|Vezel X Honda Sensing|2018|61000|8100|Hybrid|In stock",
-    "Honda|Stepwgn premium line|2022|28000|20600|Hybrid|In stock",
-    "Toyota|Corolla Cross Hybrid Z|2024|29000|15900|Hybrid|In stock",
-    "BMW|X1 xDrive18d M Sport|2017|49000|8100|Light Oil|In stock",
-    "Lexus|NX F sports|2025|18000|34400|Hybrid|In stock",
-    "Honda|Freed G Honda Sensing|2021|40000|8800||In stock",
-    "Toyota|RAV4 G|2023|38000|16200||In stock",
-    "Toyota|Yaris Cross Z|2024|13000|14000|Hybrid|In stock",
-    "Honda|Vezel Z|2021|33000|12800|Hybrid|In stock",
-    "BMW|X1 xDrive18d M Sport|2020|45000|13500|Light Oil|In stock",
-    "Audi|Q5 40 TDI Quattro S line|2021|32000|17900|Hybrid|In stock",
-    "BMW|X3 xDrive20d M Sport|2018|11000|18200|Light Oil|In stock",
-    "Lexus|NX F sports|2015|103000|9000|Hybrid|In stock",
-    "Honda|Fit L Honda Sensing|2018|48000|5700|Hybrid|In stock",
-    "Honda|Freed G Honda Sensing|2018|86000|4600||In stock",
-    "Honda|Freed G|2023|29000|10900|Hybrid|In stock",
-    "Lexus|RX F sports|2017|59000|15900||In stock",
-    "Toyota|Yaris Cross Z Adventure|2023|66000|11900|Hybrid|In stock",
-    "Lexus|RX F Sports Performance|2024|36000|41500|Hybrid|In stock",
-    "Toyota|Yaris Cross Z|2020|39000|11800|Hybrid|In stock",
-    "Toyota|Hilux Z|2023|10000|22100|Light Oil|In stock",
-    "Lexus|Lbx elegant|2025|14000|22900|Hybrid|In stock",
-    "Toyota|Hiace Wagon GL|2022|26000|25700||In stock",
-    "Toyota|Markx 250G|2013|82000|5350||In stock",
-    "Toyota|Markx 250G|2017|82000|7500||In stock",
-    "Toyota|Crown RS Limited|2020|98000|17750|Hybrid|In stock",
-    "Toyota|Prius Phv S|2019|70000|10000|Hybrid|In stock",
-    "Toyota|Markx premium|2016|21000|9650||In stock",
-    "Toyota|Markx 250G|2014|36000|9000||In stock",
-    "Toyota|Prius Phv A Premium|2019|48000|15150|Hybrid|In stock",
-    "Toyota|Crown RS Advance|2018|45000|24300|Hybrid|In stock",
-    "Toyota|Crown RS Advance|2018|83000|19650||In stock",
-    "Toyota|Hiace Wagon Grand Cabin|2025|5000|28950||In stock",
-    "Toyota|Crown RS Advance|2018|55000|24300|Hybrid|In stock",
-    "Toyota|Crown RS Advance|2019|41000|22150|Hybrid|In stock",
-    "Toyota|Crown RS Advance|2018|44000|23550|Hybrid|In stock",
-    "Toyota|Hiace Wagon GL|2026||27850||In stock",
-    "Toyota|Markx 250G|2012|89000|9250||In stock",
-    "Toyota|Crown RS|2018|67000|16650|Hybrid|In stock",
-    "Toyota|Hiace Wagon bus|2025|1000|35000||In stock",
-    "Toyota|Markx 250G|2012|67000|3550||In stock",
-    "Toyota|Crown SC package|2018|43000|19150|Hybrid|In stock",
-    "Toyota|Prius Phv Z|2023|13000|20700|Hybrid|In stock",
-    "Toyota|Hiace Wagon GL|2026||27500||In stock",
-    "Toyota|Crown RS Advance|2019|63000|23550|Hybrid|In stock",
-    "Toyota|Crown RS|2018|91000|17550|Hybrid|In stock",
-    "Toyota|Crown RS Limited|2020|80000|22550|Hybrid|In stock",
-    "Toyota|Crown RS|2018|65000|18950|Hybrid|In stock",
-    "Toyota|Crown G|2019|49000|22550|Hybrid|In stock",
-    "Toyota|Crown RS|2020|52000|24300|Hybrid|In stock",
-    "Toyota|Crown RS Advance|2018|64000|21800|Hybrid|In stock",
-    "Toyota|Crown RS Advance|2022|51000|26950|Hybrid|In stock",
-    "Toyota|Hiace Van Super GL|2022|109000|18550|Diesel|In stock",
-    "Toyota|Harrier Z|2021|28000|22500||In stock",
-    "Toyota|Hiace Van Super GL|2025|18000|31300|Diesel|In stock",
-    "Toyota|Harrier G|2024|12000|22150||In stock",
-    "Toyota|Harrier G|2021|57000|17850|Hybrid|In stock",
-    "Toyota|Harrier G|2025|12000|22000||In stock",
-    "Toyota|Hiace Van Super GL|2021|134000|25550|Diesel|In stock",
-    "Toyota|Harrier Z|2021|45000|21650|Hybrid|In stock",
-    "Toyota|Harrier G|2021|52000|17700||In stock",
-    "Toyota|Harrier S|2023|24000|18950||In stock",
-    "Toyota|Harrier G|2025|13000|21050||In stock",
-    "Toyota|Harrier Z|2023|15000|23950|Hybrid|In stock",
-    "Toyota|Harrier Z|2020|63000|18500|Hybrid|In stock",
-    "Toyota|Harrier Z|2024|28000|24300||In stock",
-    "Toyota|Harrier Z|2023|24000|25000||In stock",
-    "Toyota|Harrier G|2025|18000|21950||In stock",
-    "Toyota|Harrier G|2024|18000|21450||In stock",
-    "Toyota|Harrier Z|2020|34000|22650|Hybrid|In stock",
-    "Toyota|Harrier G|2021|30000|18850||In stock",
-    "Toyota|Hiace Van DX|2020|76000|15950|Diesel|In stock",
-    "Toyota|Hiace Van Super GL|2020|51000|25000|Diesel|In stock",
-    "Toyota|Harrier Z|2023|24000|24650||In stock",
-    "Toyota|Hiace Van Super GL|2021|113000|25300|Diesel|In stock",
-    "Toyota|Harrier Z|2021|19000|25000|Hybrid|In stock",
-    "Honda|Vezel G|2021|38000|14000||In stock",
-    "Audi|A1 25TFSI Advanced Adda|2022|17000|11000||In stock",
-    "Mercedes-Benz|E Class E200 coupe sports 360|2019|31000|18000||In stock",
-    "BMW|1 Series 118d M Sports One-Owner Car|2022|19000|14000|Light Oil|In stock",
-    "Mercedes-Benz|A Class A200d AMG line cleanliness|2022|23000|15000|Light Oil|In stock",
-    "Mercedes-Benz|C Class C180|2017|41000|16000||In stock",
-    "BMW|5 Series 523d xDriveM Sports Ed|2021|39000|24000|Light Oil|In stock",
-    "Mercedes-Benz|Cla CLA200d AMG line clean|2019|37000|16000|Light Oil|In stock",
-    "Mercedes-Benz|Cla CLA180 Shooting brake|2016|40000|7000||In stock",
-    "Audi|A3 30TFSI S line navigation bag|2022|10000|17000||In stock",
-    "Mercedes-Benz|A Class A200d|2020|31000|11000|Light Oil|In stock",
-    "BMW|X1 xDrive 18d M Sports 4W|2021|38000|14000|Light Oil|In stock",
-    "BMW|2 Series 218d Grand Coupe M Sports|2023|27000|16000|Light Oil|In stock",
-    "Audi|A4 35TDI S line one owner car semi|2021|35000|17000|Light Oil|In stock",
-    "BMW|2 Series 218d Grand Coupe M Sports|2021|29000|12000|Light Oil|In stock",
-    "Audi|A3 Sports bag 1.4TFSI sport|2018|33000|9000||In stock",
-    "BMW|4 Series 420i|2020|27000|20000||In stock",
-    "Audi|A5 40TDI Kuturo S line one owner|2021|33000|20000|Light Oil|In stock",
-    "Audi|Q2 35TDI Advanced Navigation TV|2022|24000|15000|Light Oil|In stock",
-    "BMW|3 Series 320d M Sports One-Owner Car|2015|48000|7000|Light Oil|In stock",
-    "BMW|3 Series 320d Touring M Sports Clear|2016|24000|12000|Light Oil|In stock",
-    "Mercedes-Benz|E Class Wagon E220d Station Wagon Ban|2018|30000|18000|Light Oil|In stock",
-    "BMW|2 Series 218d Grant Aller M Sports|2018|49000|8000|Light Oil|In stock",
-    "Mercedes-Benz|Cla CLA200d Shooting Brake|2020|19000|14000|Light Oil|In stock",
-    "BMW|1 Series 118d M Sports One-Owner Car|2017|36000|7000|Light Oil|In stock",
-    "Mercedes-Benz|A Class A200d Sedan AMG Line Clear|2021|22000|14000|Light Oil|In stock",
-    "BMW|X2 xDrive 18d M Sports 4|2019|43000|10000|Light Oil|In stock",
-    "Mercedes-Benz|C Class C220d AMG La|2021|24000|24000|Light Oil|In stock",
-    "Mercedes-Benz|B Class B200d AMG line one-owner car|2022|33000|15000|Light Oil|In stock",
-    "BMW|2 Series 218d grand coupe play ete|2020|22000|12000|Light Oil|In stock",
-    "Mercedes-Benz|V Class V220d Sports Navigation TV 36|2017|20000|22000|Light Oil|In stock",
-    "BMW|X3 xDrive 20i M Sports 4W|2015|35000|9000|Light Oil|In stock",
-    "Audi|A1 25TFSI S line half leather|2020|34000|12000||In stock",
-    "Lexus|NX NX350h|2024|16000|27000|Hybrid|In stock",
-    "Mercedes-Benz|Cls CLS220d Sports Exclusive|2020|67000|19000|Light Oil|In stock",
-    "Lexus|ES ES300h version L|2019|154000|14000|Hybrid|In stock",
-    "BMW|X5 xDrive 40d M Sports|2024|15000|43000|Hybrid|In stock",
-    "BMW|X3 20d xDrive M Sports|2024|14000|32000|Hybrid|In stock",
-    "BMW|X2 xDrive 20d M Sports|2025|6000|28000|Hybrid|In stock",
-    "BMW|3 Series 320d Touring Luxury|2016|50000|8000|Light Oil|In stock",
-    "BMW|5 Series 530e M sports edition|2021|25000|20000|Hybrid|In stock",
-    "BMW|3 Series 318i Touring M Sports|2021|30000|15000||In stock",
-    "Mercedes-Benz|Cls CLS220d Sports Exclusive|2018|41000|22000|Light Oil|In stock",
-    "Lexus|NX NX200t F sport late specification|2015|86000|11000||In stock",
-    "Toyota|Voxy 2.0ZS Kira 7-seater|2016|111000|6000||In stock",
-    "Honda|Fit Basic|2020|103000|5000||In stock",
-    "BMW|4 Series 420i coupe luxury|2015|75000|5000||In stock",
-    "BMW|2 Series 218iActive Tour Alarm|2015|62000|3000||In stock",
-    "BMW|3 Series 320i luxury|2017|62000|5000||In stock",
-    "Audi|A5 2.0TFSI Kuwatoro|2015|60000|5000||In stock",
-    "Lexus|NX 200t I package spare T|2016|82000|10000||In stock",
-    "Honda|Vezel e:HEV Z|2023|8000|16000|Hybrid|In stock",
-    "Lexus|UX 250h version C|2019|16000|17000|Hybrid|In stock",
-    "Lexus|RX RX450h version L|2019|54000|23000|Hybrid|In stock",
-    "Toyota|Voxy ZS Sparkle|2015|83000|10000||In stock",
-    "Lexus|Lbx Relax|2024|26000|27850|Hybrid|In stock",
-    "Lexus|Lbx elegant|2025|7000|29300|Hybrid|In stock",
-    "Mazda|MAZDA2 XD|2023|24000|10350|Diesel|In stock",
-    "Lexus|RX RX450h F sports|2020|124000|20700|Hybrid|In stock",
-    "Mazda|MAZDA2 XD|2019|65000|6650|Diesel|In stock",
-    "Lexus|Lbx elegant|2025|10000|28950|Hybrid|In stock",
-    "Lexus|Lbx relax|2024|16000|29300|Hybrid|In stock",
-    "Lexus|Lbx relax|2024|18000|30000|Hybrid|In stock",
-    "Nissan|AD Van VE|2021|28000|6450||In stock",
-    "Honda|Vezel Z|2025|23000|20350|Hybrid|In stock",
-    "Mazda|MAZDA2 15S|2019|18000|8700||In stock",
-    "Lexus|UX 250h_F Sports|2021|52000|23500|Hybrid|In stock",
-    "Lexus|Lbx cool|2024|11000|31050|Hybrid|In stock",
-    "Honda|Vezel Z|2025|15000|20000|Hybrid|In stock",
-    "Lexus|Lbx Morizou RR|2026|10000|40000||In stock",
-    "Lexus|RX 450h-version L|2021|33000|35700|Hybrid|In stock",
-    "Mazda|MAZDA2 15S|2019|43000|8450||In stock",
-    "Mazda|MAZDA2 15S|2022|35000|10000||In stock",
-    "Mazda|Axela 15S|2018|84000|7150||In stock",
-    "Lexus|Lbx cool|2024|14000|30350|Hybrid|In stock",
-    "Lexus|Lbx relax|2024|12000|30000|Hybrid|In stock",
-    "Mazda|MAZDA2 15S|2020|51000|7700||In stock",
-    "Mazda|MAZDA2 15S|2019|85000|6050||In stock",
-    "Mazda|Axela 15S|2018|34000|9900||In stock",
-    "Mazda|Atenza Wagon XD|2018|54000|12850|Diesel|In stock",
-    "Nissan|AD Van VE|2021|55000|6150||In stock",
-    "Lexus|Lbx relax|2024|19000|30000|Hybrid|In stock",
-    "Lexus|RX 2.0 300|2021|30000|26350||In stock",
-    "Lexus|RX F sport performance|2023|11000|50450|Hybrid|In stock",
-    "Mazda|MAZDA2 15SL package|2020|38000|8950||In stock",
-    "Mazda|Axela 15S|2018|44000|9850||In stock",
-    "Lexus|IS IS300H|2025|6000|32800|Hybrid|In stock",
-    "Mazda|CX 5 XD Sports Appearance|2022|66000|12400|Light Oil|In stock",
-    "Honda|N Box L turbo|2022|39000|8500||In stock",
-    "Toyota|Corolla Cross Z|2024|23000|14100||In stock",
-    "Honda|Vezel e:HEV Z|2025|24000|16500|Hybrid|In stock",
-    "Honda|N Box L|2022|6000|7200||In stock",
-    "Toyota|RAV4 Adventurer|2023|24000|18200||In stock",
-    "Mitsubishi|Delica Mini T|2024|11000|9500|Hybrid|In stock",
-    "Mazda|CX 5 20S Proactive|2018|49000|9100||In stock",
-    "Honda|Fit e:HEV home|2022|42000|7900|Hybrid|In stock",
-    "Honda|N Box G L package|2015|91000|2800||In stock",
-    "Nissan|Note S|2021|46000|5600|Hybrid|In stock",
-    "Honda|Fit 13G F package|2014|60000|2300||In stock",
-    "Nissan|Note X|2021|19000|9500|Hybrid|In stock",
-    "Mazda|Demio 13S Touring|2018|49000|4400||In stock",
-    "Mitsubishi|Delica D5 P|2024|17000|20500|Light Oil|In stock",
-    "Nissan|Dayz Highway Star X|2020|2000|5000|Hybrid|In stock",
-    "Toyota|RAV4 Hybrid G|2019|20000|15800|Hybrid|In stock",
-    "Nissan|Note e-power X|2019|69000|4100|Hybrid|In stock",
-    "Nissan|Note e-power X|2018|117000|2800|Hybrid|In stock",
-    "Toyota|Aqua S style black|2019|102000|4300|Hybrid|In stock",
-    "Honda|N Box G L Hondasensing|2019|34000|5600||In stock",
-    "Lexus|RX RX200t version L|2015|158000|10900||In stock",
-    "Toyota|Prado TX L package|2017|109000|17800|Light Oil|In stock",
-    "Lexus|ES ES300h version L|2019|87000|13900||In stock",
-    "Lexus|NX NX350h F sports|2023|56000|26700||In stock",
-    "Lexus|CT CT200h version C|2016|62000|6800||In stock",
-    "Lexus|NX NX300h urban style|2017|66000|14300||In stock",
-    "Lexus|UX UX200 F sports|2018|33000|14300||In stock",
-    "Honda|Vezel Hybrid e:HEV Z|2024|8000|16700||In stock",
-    "Nissan|X Trail 20X hybrid emergen|2016|138000|4200||In stock",
-    "Lexus|CT CT200h version C|2017|51000|9500||In stock",
-    "Honda|Freed G Honda sensing|2017|108000|5600||In stock",
-    "Lexus|RX RX500h|2024|50000|35700|Hybrid|In stock",
-    "Lexus|NX NX350h F sports|2022|62000|24800|Hybrid|In stock",
-    "Honda|Fit 13G|2014|42000|3200||In stock",
-    "Toyota|Hiace Van Super GL Dark Prime II|2026|2000|23500||In stock",
-    "Toyota|Hiace Van Super GL Dark Prime II|2021|42000|20200|Light Oil|In stock",
-    "Honda|N Box SS package|2017|128000|1800||In stock",
-    "Honda|Stepwgn e:HEV Spada G EX Honta|2021|119000|8800|Hybrid|In stock",
-    "Nissan|Note Medalist|2016|39000|2700||In stock",
-    "Toyota|Aqua G|2016|101000|2400|Hybrid|In stock",
-    "Mazda|CX 3 XD Touring|2016|121000|3500|Light Oil|In stock",
-    "Honda|N Box G L Hondasensing|2018|40000|5800||In stock",
-    "Nissan|Dayz Roox Highway Star X|2019|29000|5300||In stock",
-    "Honda|Stepwgn Spada|2024|54000|18800||In stock",
-    "Honda|N Box Base grade|2025|13000|8700||In stock",
-    "Toyota|Prado TX L package 70th Aniva|2022|26000|25000||In stock",
-    "Honda|N Box G L Hondasensing|2017|61000|4400||In stock",
-    "Mazda|CX 8 XD black tone edition|2021|55000|11600|Light Oil|In stock",
-    "Mazda|CX 3 XD L package|2018|76000|5600|Light Oil|In stock",
-    "Toyota|Aqua G G's|2016|80000|4800|Hybrid|In stock",
-    "Mitsubishi|Delica D5 2.2 P diesel turbo 4W|2026||34700|Light Oil|In stock",
-    "Mitsubishi|Delica D5 2.2 P diesel turbo 4W|2019|23000|22400|Light Oil|In stock",
-    "Lexus|CT 200h version C|2017|58000|11500|Hybrid|In stock",
-    "Toyota|Aqua X-urban|2015|135000|2700||In stock",
-    "Honda|Vezel e:HEV|2026||20600||In stock",
-    "Honda|N Box L turbo|2021|20000|7900||In stock",
-    "Honda|Freed G|2024|18000|12600||In stock",
-    "Toyota|RAV4 adventure|2023|32000|25000|Hybrid|In stock",
-    "Toyota|RAV4 G|2020|58000|14400|Hybrid|In stock",
-    "Toyota|RAV4 adventure|2019|74000|16450||In stock",
-    "Toyota|RAV4 G|2023|21000|24650|Hybrid|In stock",
-    "Toyota|RAV4 adventure|2024|37000|25650|Hybrid|In stock",
-    "Subaru|Impreza Wagon 1.6i-L Eyesight S|2018|79000|6050||In stock",
-    "Subaru|Impreza Wagon 1.6i-S Eyesight|2020|50000|9300||In stock",
-    "Toyota|86 RZ|2024|34000|23650||In stock",
-    "Toyota|86 GT Limited|2019|32000|14800||In stock",
-    "Subaru|XV 2.0i-L Eyesight|2019|58000|9650||In stock",
-    "Toyota|RAV4 adventure|2024|31000|25000|Hybrid|In stock",
-    "Subaru|Impreza Wagon 2.0i-L Eyesight|2018|62000|5850||In stock",
-    "Subaru|XV advance|2021|52000|13300|Hybrid|In stock",
-    "Toyota|RAV4 G|2023|19000|25350|Hybrid|In stock",
-    "Toyota|RAV4 adventure|2021|44000|17500||In stock",
-    "Subaru|XV 2.0i-L Eyesight|2018|20000|12150||In stock",
-    "Toyota|86 RZ|2022|18000|25350||In stock",
-    "Subaru|Impreza Wagon 2.0i-S Eyesight|2019|14000|11200||In stock",
-    "Subaru|Impreza Wagon 1.6i-L Eyesight|2021|45000|7700||In stock",
-    "Subaru|XV advance|2020|35000|13950|Hybrid|In stock",
-    "Toyota|RAV4 adventure|2021|47000|20700||In stock",
-    "Subaru|Impreza Wagon i-L Eyesight S style|2018|69000|5700||In stock",
-    "Toyota|86 GT|2018|17000|16400||In stock",
-    "Toyota|RAV4 adventure|2019|39000|18000||In stock",
-    "Subaru|XV 2.0e-S EyeSight|2022|49000|13450|Hybrid|In stock",
-    "Toyota|86 RZ|2022|43000|19300||In stock",
-    "Toyota|RAV4 adventure|2022|46000|23050|Hybrid|In stock",
-    "Subaru|XV 2.0i-S Eyesight|2018|70000|10550||In stock",
-    "Toyota|86 RZ|2025|10000|22850||In stock",
-    "Toyota|RAV4 adventure|2019|36000|19850||In stock",
-    "Subaru|XV 2.0i-L Eyesight|2018|65000|10350||In stock",
-    "Audi|A3 30 TFSI S line|2025||26500|Hybrid|In stock",
-    "Toyota|RAV4 G|2021|43000|20700|Hybrid|In stock",
-    "Toyota|RAV4 Z|2026|7000|34000|Hybrid|In stock",
-    "Toyota|86 RZ|2024|19000|23000||In stock",
-    "Subaru|Impreza Wagon 1.6i-L Eyesight|2018|42000|6850||In stock",
-    "Toyota|86 GT|2021|19000|19650||In stock",
-    "Toyota|86 SZ|2022|36000|18200||In stock",
-    "Toyota|RAV4 G|2025|24000|23200|Hybrid|In stock",
-    "Lexus|NX F sports|2023|35000|28700|Hybrid|In stock",
-    "Honda|Vezel Z Honda Sensing|2018|56000|8500|Hybrid|In stock",
-    "Toyota|Yaris Cross Z|2024|32000|14400|Hybrid|In stock",
-    "Lexus|RX F sports|2017|51000|13500||In stock",
-    "Honda|Vezel Z|2023|38000|14700|Hybrid|In stock",
-    "Honda|Vezel Z Honda Sensing|2018|91000|7500|Hybrid|In stock",
-    "Honda|Freed G Honda Sensing|2019|31000|9700|Hybrid|In stock",
-    "Honda|Freed G Honda Sensing|2019|75000|7500||In stock",
-    "Toyota|Corolla Cross Z|2024|38000|16900|Hybrid|In stock",
-    "Toyota|RAV4 GZ package|2024|27000|19900||In stock",
-    "Toyota|RAV4 G|2020|31000|17100|Hybrid|In stock",
-    "Toyota|Sienta G Cuero|2019|38000|9700|Hybrid|In stock",
-    "Toyota|Sienta G|2015|86000|4700||In stock",
-    "Toyota|Corolla Cross G|2024|37000|12900||In stock",
-    "Toyota|Noah S-Z|2023|35000|21500|Hybrid|In stock",
-    "Lexus|RX Version L|2024|13000|30900|Hybrid|In stock",
-    "Toyota|RAV4 adventure off road package|2020|44000|15300||In stock",
-    "Toyota|RAV4 adventure|2019|53000|13500||In stock",
-    "Toyota|Corolla Cross S|2024|22000|15300|Hybrid|In stock",
-    "Toyota|RAV4 adventure|2024|20000|21800|Hybrid|In stock",
-    "Toyota|Yaris Cross G|2023|13000|11800|Hybrid|In stock",
-    "Toyota|RAV4 G|2019|24000|14400|Hybrid|In stock",
-    "Toyota|Yaris Cross Z|2021|42000|11800|Hybrid|In stock",
-    "Toyota|Yaris Cross Z|2023|26000|12800|Hybrid|In stock",
-    "Honda|Freed closter|2024|42000|16500|Hybrid|In stock",
-    "Lexus|RX Version L|2021|39000|26800|Hybrid|In stock",
-]
+# Seed data (cars, import rules, FAQs) lives in seed_data.py,
+# only because app.py got too big to deploy in one piece.
+from seed_data import SAMPLE_CARS, SAMPLE_FAQS, SAMPLE_RULES, \
+    seed_car_rows
 
 
-def seed_car_rows():
-    """Parse the compact SAMPLE_CARS strings into database rows."""
-    rows = []
-    for line in SAMPLE_CARS:
-        make, model, year, km, price, body, status = line.split("|")
-        rows.append((make, model, int(year),
-                     int(km) if km else None, int(price), body, status))
-    return rows
-
-# Sample import rules. These are simple demo rules, not legal advice.
-# Import age limits from the website import page (afriditrading.com/import).
-# 0 means no age limit on that page. These are simple demo rules,
-# not legal advice — the full guide is on the website.
-# Real import rules from afriditrading.com/import and the country pages (Nov 2026). 0 means no age limit, None means the website does not state an age limit. These are simple demo rules, not legal advice — the full guide is on the website.
-SAMPLE_RULES = [
-    ('Afghanistan', 0, 'Shipping: 16–26 Days (RoRo). Sailings: Monthly. Inspection: No Inspection Required. Line: ECL / NYK. Not stated on page: port.'),
-    ('Angola', 5, 'Port: Luanda. Shipping: 24–36 Days (RoRo). Sailings: Monthly (RoRo). Inspection: PSI. Line: Waitara. Page states min. manufacturing year 2021.'),
-    ('Antigua and Barbuda', 0, 'Port: Saint Johns. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Not stated on page: shipping line.'),
-    ('Armenia', 0, 'Shipping: 34-46 Days. Sailings: Monthly. Line: MAERSK. Not stated on page: port, inspection.'),
-    ('Bahamas', 10, 'Port: Freeport. Shipping: 24–39 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: CNC Japan. Manufacturing year 2016 or later (per page FAQ).'),
-    ('Bahrain', 5, 'Shipping: 22–31 Days. Sailings: Weekly. Manufacturing year 2021 or later (per page FAQ). Not stated on page: port, inspection, shipping line.'),
-    ('Bangladesh', 4, 'Port: Chittagong. Shipping: 19–24 Days (RoRo). Sailings: Monthly. Inspection: JAAI. Manufacturing year 2022 or later (per page FAQ). Not stated on page: shipping line.'),
-    ('Benin', 0, "Port: Cotonou. Shipping: 34-44 Days. Sailings: Monthly (RoRo). Inspection: Required. Shipping line not stated on page (shown as '-')."),
-    ('Bhutan', None, "Page shows no import-rule header fields (site index lists 'See import rules'); no age limit, port, shipping time, inspection or shipping line stated."),
-    ('Botswana', 0, 'Port: Durban. Shipping: 24-34 Days. Sailings: Monthly (RoRo). Inspection: No Inspection. Line: Mediterranean Shipping Company. Landlocked; shipped via Durban, South Africa.'),
-    ('Brunei', 3, 'Port: Muara Harbor. Shipping: 13–20 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: E&W Maritime. Manufacturing year 2023 or later (per page FAQ).'),
-    ('Burkina Faso', 0, 'Port: Koudougou And Ouagadougou. Shipping: 28–36 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: Fesco Lines. Landlocked; destination shown as the inland cities Koudougou and Ouagadougou.'),
-    ('Burundi', 0, 'Port: Mombasa. Shipping: 24-34 Days. Sailings: Monthly (RoRo). Inspection: No Inspection. Line: Keihin, MOL, Hoegh. Landlocked; shipped via Mombasa, Kenya.'),
-    ('China', 10, 'Port: Tianjin Xin Gang. Shipping: 10–15 Days (Container). Sailings: Weekly. Line: COSCO. Manufacturing year 2016 or later (per page FAQ). Not stated on page: inspection.'),
-    ('Comoros', None, "Port: Moroni. Shipping: 28–34 Days (Container). Sailings: Weekly. Age limit, inspection and shipping line not stated on page (all shown as '-')."),
-    ('Cote Divoire', 5, "Port: Abidjan. Shipping: 34–46 Days (RoRo). Sailings: 34-46 Days. Line: OMA Côte d'Ivoire. Inspection not stated on page (shown as '-'); vessel schedule field on the page literally shows '34-46 Days' rather than a frequency; min. manufacturing year 2021."),
-    ('Dominican Republic', 10, 'Port: Santo Domingo. Shipping: 24–36 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Manufacturing year 2016 or later (per page FAQ). Not stated on page: shipping line.'),
-    ('Egypt', 1, 'Port: Al Iskandariyh (Alexandria). Shipping: 21–28 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: United Arab Shipping Agencies. Page states min. manufacturing year 2025.'),
-    ('Equatorial Guinea', 10, "Shipping: 34-44 Days. Sailings: Monthly. Inspection: Fiche de Demande d’Inspection. Destination port not stated on page; shipping line not stated (shown as '-'); min. manufacturing year 2016."),
-    ('Ethiopia', 0, "Port: Djibouti. Shipping: 21–30 Days (Container). Sailings: Weekly. Inspection: No Inspection. Landlocked; shipped via Djibouti; shipping line not stated on page (shown as '-')."),
-    ('Gabon', 3, "Port: Libreville. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: PROGEC. Shipping line not stated on page (shown as '-'); min. manufacturing year 2023."),
-    ('Gambia', 8, "Port: Banjul. Shipping: 26–34 Days (Container). Sailings: Weekly. Inspection: ASYCUDA. Shipping line not stated on page (shown as '-'); min. manufacturing year 2018."),
-    ('Georgia', 0, 'Port: Poti. Shipping: 34–46 Days (Container). Sailings: Monthly. Inspection: No Inspection. Line: MAERSK / CMA CGM.'),
-    ('Ghana', 10, 'Port: Tema. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: PVoC. Line: Apex Shipping. Verified against known data; matches (max 10 years, TEMA, 34-44 days RoRo, monthly, PVoC, Apex Shipping); min. manufacturing year 2016.'),
-    ('Grenada', 0, 'Port: Saint George. Shipping: 24–39 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Not stated on page: shipping line.'),
-    ('Guyana', 8, 'Port: Georgetown. Shipping: 24–34 Days (RoRo). Sailings: Less Than Bi-Monthly (RoRo). Inspection: ATJ Inspection. Line: Yuwa, Hoegh, MOL. Manufacturing year 2018 or later (per page FAQ).'),
-    ('Hong Kong', 7, 'Port: Hong Kong. Shipping: 9–14 Days (RoRo). Sailings: Fortnightly. Inspection: No Inspection. Line: ZIM / OOCL. Manufacturing year 2019 or later (per page FAQ).'),
-    ('India', 3, 'Port: Chennai (Madras). Shipping: 19–24 Days (RoRo). Sailings: Monthly. Inspection: Roadworthiness. Line: Naval Docks. Manufacturing year 2023 or later (per page FAQ).'),
-    ('Indonesia', None, 'Port: Tanjung Benete. Shipping: 11–23 Days (RoRo). Sailings: Monthly. Not stated on page: year restriction, inspection, shipping line.'),
-    ('Iran', 3, 'Port: Bandar Abbas. Shipping: 29–38 Days (RoRo). Sailings: Bi-Monthly. Manufacturing year 2023 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
-    ('Iraq', 2, 'Port: Umm Qasr. Shipping: 29–34 Days (Container). Sailings: Weekly. Manufacturing year 2024 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
-    ('Jamaica', 6, 'Port: Kingston. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: Pre-Shipment Inspection. Line: CNC Japan. Manufacturing year 2020 or later (per page FAQ).'),
-    ('Jordan', 10, 'Port: Al Aqabah. Shipping: 24–33 Days (Container). Sailings: Weekly. Manufacturing year 2016 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
-    ('Kazakhstan', 5, 'Shipping: 24–26 Days (Container). Sailings: Weekly. Manufacturing year 2021 or later (per page FAQ). Not stated on page: port, inspection, shipping line.'),
-    ('Kyrgyzstan', 10, 'Port: Bishkek. Shipping: 34–36 Days (Container). Sailings: Weekly. Inspection: No Inspection. Manufacturing year 2016 or later (per page FAQ). Not stated on page: shipping line.'),
-    ('Laos', 0, 'Port: Port of Laos. Inspection: No Inspection. Not stated on page: shipping time, vessel schedule, shipping line.'),
-    ('Lebanon', 8, 'Port: Bayrut. Shipping: 34–46 Days (Container). Sailings: Monthly. Manufacturing year 2018 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
-    ('Lesotho', 0, 'Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: K Line. Destination port not stated on page (landlocked; no port named).'),
-    ('Liberia', 10, 'Port: Monrovia. Shipping: 39–49 Days (RoRo). Sailings: Monthly. Inspection: BIVAC. Line: Umarco Shipping. Min. manufacturing year 2016.'),
-    ('Libya', 5, "Port: Mina Tarabulus (Tripoli). Shipping: 29–40 Days (Container). Sailings: Weekly. No inspection field or inspection FAQ on the page; shipping line not stated (shown as '-'); min. manufacturing year 2021."),
-    ('Macau', None, 'Port: Macau. Shipping: 7–10 Days (Container). Sailings: Weekly. Not stated on page: year restriction, inspection, shipping line.'),
-    ('Madagascar', None, "Port: Tamatave. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: BSC / CTN. Age limit not stated on page (shown as '-'); shipping line not stated (shown as '-')."),
-    ('Malawi', 0, "Port: Dar Es Salaam. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Landlocked; shipped via Dar es Salaam, Tanzania; shipping line not stated on page (shown as '-')."),
-    ('Malaysia', 5, 'Port: Penang. Shipping: 9–13 Days (Container). Sailings: Weekly. Manufacturing year 2021 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
-    ('Maldives', 0, 'Port: Male. Shipping: 21–30 Days. Sailings: Weekly. Inspection: No Inspection. Line: Asia Forwarding.'),
-    ('Mauritania', 8, "Port: Nouakchott. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Shipping line not stated on page (shown as '-'); min. manufacturing year 2018."),
-    ('Mauritius', 4, 'Port: Port Louis. Shipping: 19–24 Days (RoRo). Sailings: Monthly. Inspection: JEVIC / JAAI. Line: PAS Mauritius. Min. manufacturing year 2022.'),
-    ('Mongolia', 0, 'Port: Ulaanbaatar. Shipping: 13–20 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: Shipping Line Mongolia.'),
-    ('Mozambique', 0, "Port: Maputo. Shipping: 29–34 Days (RoRo). Sailings: Monthly. Inspection: Intertek. Shipping line not stated on page (shown as '-')."),
-    ('Myanmar', 5, 'Port: Yangon. Shipping: 13–22 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: S.R Shipping Myanmar. Manufacturing year 2021 or later (per page FAQ).'),
-    ('Namibia', 12, 'Port: Walvis Bay. Shipping: 29–36 Days (Container). Sailings: Weekly. Inspection: No Inspection. Line: Manica Group. Min. manufacturing year 2014.'),
-    ('Nigeria', 15, 'Port: Lagos. Shipping: 34–44 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: 3MO Shipping. Min. manufacturing year 2011.'),
-    ('Oman', 10, 'Port: Muscat. Shipping: 29–34 Days. Sailings: Less Than Bi-Monthly. Manufacturing year 2016 or later (per page FAQ). Not stated on page: inspection, shipping line.'),
-    ('Pakistan', 3, 'Port: Karachi. Shipping: 14–24 Days (RoRo). Sailings: Monthly. Inspection: Not Required. Line: Al-Hamd International. Manufacturing year 2023 or later (per page FAQ).'),
-    ('Philippines', 0, 'Port: Manila. Shipping: 5–8 Days (Container). Sailings: Weekly. Inspection: PIA. Not stated on page: shipping line.'),
-    ('Qatar', 5, 'Port: Doha. Shipping: 20–29 Days (Container). Sailings: Weekly. Inspection: Fahes. Manufacturing year 2021 or later (per page FAQ). Not stated on page: shipping line.'),
-    ('Rwanda', 0, 'Port: Mombasa. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: Hyundai Glovis. Landlocked; shipped via Mombasa, Kenya.'),
-    ('Saudi Arabia', 5, 'Port: Dammam. Shipping: 34–46 Days (Container). Sailings: Bi-Monthly. Inspection: No Inspection. Manufacturing year 2021 or later (per page FAQ). Not stated on page: shipping line.'),
-    ('Senegal', 8, 'Port: Dakar. Shipping: 34–44 Days (RoRo). Sailings: Monthly. No inspection or shipping line field on the page; min. manufacturing year 2018.'),
-    ('Seychelles', 3, 'Port: Victoria. Shipping: 28–39 Days (Container). Sailings: Monthly. No inspection or shipping line field on the page; min. manufacturing year 2023.'),
-    ('Sierra Leone', 0, 'Port: Freetown. Shipping: 34–45 Days (Container). Sailings: Weekly. Inspection: No Inspection. Shipping line not stated on the page.'),
-    ('Singapore', 3, 'Port: Keppel (East Singapore). Shipping: RoRo (09-14 Days). Sailings: Fortnightly. Inspection: No Inspection. Line: Samudera Shipping Line Pte Ltd.. Manufacturing year 2023 or later (per page FAQ).'),
-    ('Somalia', None, "Port: Berbera. Shipping: 36–46 Days (Container). Sailings: Weekly. No age restriction stated on the page (import index says 'See import rules'); no inspection or shipping line field on the page."),
-    ('South Africa', 0, 'Port: Durban. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: Keihin.'),
-    ('South Korea', 0, 'Port: Busan. Shipping: 20–30 Days (RoRo). Sailings: Weekly. Inspection: No Inspection. Line: Hyundai Merchant Marine.'),
-    ('South Sudan', 0, 'Port: Mombasa. Shipping: 24–36 Days (RoRo). Sailings: Monthly. Inspection: EAA. Line: Hyundai Glovis. Landlocked; shipped via Mombasa, Kenya.'),
-    ('Sri Lanka', 3, 'Port: Colombo. Shipping: 14–24 Days (RoRo). Sailings: Fortnightly. Inspection: JAAI. Line: K-Line / MOL. Manufacturing year 2023 or later (per page FAQ).'),
-    ('Taiwan', 10, 'Port: Keelung. Shipping: 5–9 Days. Line: ZIM. Manufacturing year 2016 or later (per page FAQ). Not stated on page: vessel schedule, inspection.'),
-    ('Tanzania', 0, 'No age limit, from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
-    ('Thailand', 0, 'Port: Bangkok. Shipping: 14–19 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: Thailand Star Shipping.'),
-    ('Togo', 0, 'No age limit, from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
-    ('Trinidad and Tobago', 4, 'Port: Port of Spain. Shipping: 24–34 Days (RoRo). Sailings: Monthly. Inspection: No Inspection. Line: CNC Japan. Manufacturing year 2022 or later (per page FAQ).'),
-    ('Turkey', 0, 'Port: Istanbul. Shipping: 29-36 Days. Sailings: Monthly. Inspection: TÜVTURK. Line: ZIM Integrated Shipping Services Ltd.'),
-    ('Uganda', 15, 'Age limit from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
-    ('Vietnam', 5, 'Port: Ho Chi Minh City. Shipping: 10–17 Days (Container). Sailings: Weekly. Line: Ben Line Agencies. Manufacturing year 2021 or later (per page FAQ). Not stated on page: inspection.'),
-    ('Zambia', 0, 'No age limit, from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
-    ('Zimbabwe', 10, 'Age limit from the import index page. Port, shipping time and inspection were not read — the country page could not be opened.'),
-]
-
-
-# Real buyer questions and answers, taken from afriditrading.com
-# (home page, How to Buy, FAQs, Payment Information, Shipping
-# Information and import pages). Short answers, simple words.
-# Each FAQ has keywords: the bot checks these first.
-SAMPLE_FAQS = [
-    ("How do I buy a car?",
-     "5 easy steps: 1. Search your car. 2. Inquire. 3. Get your invoice. "
-     "4. Pay. 5. Shipment. You can buy from stock in Japan, UK, Thailand "
-     "and Korea, or buy a pre-shipped car.",
-     "buying", ("how to buy", "how do i buy", "buying steps")),
-    ("How do I pay?",
-     "Pay by telegraphic transfer to our company bank account in Japan, "
-     "or by Visa, Mastercard or PayPal. We also take WISE business "
-     "account payments. The beneficiary is always Afridi Trading. Never "
-     "pay to a person and never use Western Union.",
-     "payment", ("how do i pay", "how to pay", "payment method")),
-    ("Can I pay with a card?",
-     "Yes. We take Visa, Mastercard and PayPal, as well as bank transfer "
-     "and WISE. Bank fees are paid by the buyer.",
-     "payment", ("pay with a card", "credit card", "visa", "mastercard", "paypal")),
-    ("What is your refund policy?",
-     "The auction security deposit is 100% refundable. If you cancel a "
-     "purchase order, you may need to pay the costs already spent, "
-     "because we may have to resell the car. Ask sales before you pay.",
-     "refund", ("refund", "cancel my order", "cancel purchase")),
-    ("How long does shipping take?",
-     "Delivery usually takes 4 to 8 weeks. The exact time depends on the "
-     "shipping schedule. Once your car is fully paid, we ship it on the "
-     "earliest available vessel.",
-     "shipping", ("how long", "delivery time", "shipping take")),
-    ("How much is freight?",
-     "Freight depends on the car size and the port, so there is no one "
-     "fixed freight price. The exact freight is written on your invoice. "
-     "Tell me your country for a sample freight price.",
-     "freight", ("freight", "shipping cost")),
-    ("Is shipping insured?",
-     "Yes. Shipping is insured, with full marine transit cover. In this "
-     "demo the delivered price adds $100 for insurance.",
-     "insurance", ("insurance", "insured")),
-    ("What documents do I get?",
-     "You get a proforma invoice first. After you pay, we ship the car "
-     "and courier the original B/L (bill of lading) to you, so you can "
-     "clear the car at your port.",
-     "documents", ("document", "bill of lading", "b/l", "papers")),
-    ("How do I collect my car at the port?",
-     "You collect the car at your destination port. Bring the original "
-     "B/L and your ID to clear it. We handle the auction, export papers "
-     "and shipping.",
-     "port", ("collect", "pick up my car", "pickup")),
-    ("What does FOB mean?",
-     "FOB means the price in Japan. Extra costs are freight, clearance, "
-     "import duty, registration and compliance fees. C&F means FOB plus "
-     "freight. CIF means FOB plus freight plus insurance.",
-     "price", ("fob", "cif", "c&f", "what does fob")),
-    ("What is an auction grade?",
-     "Auction grades go from 3 to 5 and S. Grade 5 and S are the best. "
-     "Grade 4 is good. Grade 3.5 is fair. Grade R means the car was "
-     "repaired after an accident.",
-     "grade", ("auction grade",)),
-    ("What is the auction sheet?",
-     "The auction sheet shows the car's condition, grade and marks. All "
-     "cars go through a full inspection to make sure they match the "
-     "sheet. Ask me about one grade, for example: what is grade 4?",
-     "grade", ("auction sheet",)),
-    ("Can I bid at the Japan auctions?",
-     "Yes. Register, talk to a sales representative, and pay a security "
-     "deposit (100% refundable) to start bidding. You bid up to your "
-     "account credit limit. We are members of all auction houses in "
-     "Japan, with about 100,000 cars each week.",
-     "auction", ("bid", "auction")),
-    ("How many cars do you have?",
-     "We have over 1,000 cars in our regular stock, and about 100,000 "
-     "cars each week through the Japan auctions. Tell me a make or a "
-     "budget and I will show you cars.",
-     "stock", ("how many cars", "how much stock")),
-    ("Are there hidden charges?",
-     "No. There are no registration fees or hidden charges, and sign up "
-     "is free. The buyer pays the bank fees.",
-     "payment", ("hidden charge", "hidden fee", "registration fee")),
-    ("Do you sell left-hand drive cars?",
-     "Left-hand drive cars are rare in Japan, but we can find them in "
-     "our Korean and American stock. Ask us for the model you want.",
-     "cars", ("left hand", "lhd")),
-    ("How do I know you are real and not a scam?",
-     "Verify any person at afriditrading.com/verify. Every real "
-     "representative has a verification card with a QR code, and their "
-     "WhatsApp number is on our live staff list. Our emails only end in "
-     "@afriditrading.com, and our staff never take payments personally.",
-     "trust", ("scam", "verify", "you are real", "fake", "not a scam")),
-    ("What is your WhatsApp number?",
-     "WhatsApp sales: +81 80 5173 0786 or +81 70 4457 0584. Customer "
-     "support: +81 80 7256 3364. Office hours are Monday to Friday 9 to "
-     "6, Saturday 9 to 4, Japan time.",
-     "contact", ("whatsapp",)),
-    ("Do you ship to my country?",
-     "We ship to 126 destinations. Tell me your country and I will tell "
-     "you the import age limit and the delivered price to your port.",
-     "shipping", ("ship to my country", "do you ship")),
-    ("How do I track my car?",
-     "Send your tracking number, for example: track ATJ-1001. Once your "
-     "car is fully paid, we ship it on the earliest available vessel.",
-     "tracking", ("track my car", "where is my car")),
-]
 
 
 
@@ -692,8 +167,288 @@ def is_admin(user):
 
 # ---------- database helpers ----------
 
+# ---------- Supabase adapter ----------
+# The rest of the app talks to the database through a tiny
+# sqlite3-like link: db.execute(sql, params).fetchone()/fetchall()
+# and db.commit(). These classes give Supabase the same shape, so
+# no route or bot rule has to change. They only know the SQL this
+# app actually uses; anything else raises a clear error.
+
+
+class _Row(dict):
+    """One database row. Like sqlite3.Row it works both ways:
+    row["name"] and row[0] (the first column)."""
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+class _SupaCursor:
+    """Holds the rows of one query. Like a sqlite3 cursor."""
+    def __init__(self, rows):
+        self._rows = [_Row(r) if isinstance(r, dict) else r for r in rows]
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+def _is_missing_table(exc):
+    """True if a Supabase error says the table does not exist."""
+    msg = str(exc)
+    return "PGRST205" in msg or "Could not find the table" in msg
+
+
+class SupaDB:
+    """A small stand-in for a sqlite3 connection, backed by Supabase.
+    Every call is saved at once, so commit() and close() do nothing."""
+    def __init__(self, client):
+        self.client = client
+
+    def execute(self, sql, params=()):
+        return _SupaCursor(self._run(sql, params or ()))
+
+    def executemany(self, sql, rows):
+        for row in rows:
+            self.execute(sql, row)
+        return _SupaCursor([])
+
+    def commit(self):
+        return None
+
+    def close(self):
+        return None
+
+    def _run(self, sql, params):
+        text = " ".join(sql.split())
+        low = text.lower()
+        if low == "select 1":
+            return [{"1": 1}]
+        if "sqlite_master" in low:
+            return [{"count": len(SUPABASE_TABLES)}]
+        try:
+            if low.startswith("select"):
+                return self._select(text, params)
+            if low.startswith("insert"):
+                return self._insert(text, params)
+            if low.startswith("update"):
+                return self._update(text, params)
+            if low.startswith("delete"):
+                return self._delete(text, params)
+        except Exception as exc:
+            # The crawl_queue table may not exist in Supabase yet.
+            # Until it is made, the queue is simply empty.
+            if "crawl_queue" in low and _is_missing_table(exc):
+                return []
+            raise
+        raise ValueError("SQL not supported in Supabase mode: " + text[:80])
+
+    def _select(self, text, params):
+        # NOTE: the original text is parsed with case-insensitive
+        # patterns, never lowercased — lowercasing would corrupt
+        # string values like status 'Open'.
+        # COUNT(*) — ask Supabase for the count only, not the rows.
+        m = re.match(r"select count\(\*\) from (\w+)(?: where (.+))?$",
+                     text, re.I)
+        if m:
+            q = self.client.table(m.group(1)).select(
+                "id", count="exact").limit(1)
+            if m.group(2):
+                q = self._where(q, m.group(2), params)
+            return [{"count": q.execute().count or 0}]
+        if "left join" in text.lower():
+            return self._join_select(text, params)
+        if "group by" in text.lower():
+            # Only used for the crawl queue: count rows by status.
+            m = re.match(r"select (.+) from (\w+) group by (\w+)",
+                         text, re.I)
+            rows = self.client.table(m.group(2)).select("*").execute().data
+            counts = {}
+            for r in rows:
+                counts[r[m.group(3)]] = counts.get(r[m.group(3)], 0) + 1
+            return [{"status": k, "n": v} for k, v in counts.items()]
+        # Plain SELECT: cut off ORDER BY / LIMIT, then WHERE.
+        order_col = order_desc = limit = None
+        m = re.search(r"\border by (\w+)(?:\s+(asc|desc))?", text, re.I)
+        if m:
+            order_col = m.group(1)
+            order_desc = (m.group(2) or "").lower() == "desc"
+        m = re.search(r"\blimit (\d+)\s*$", text, re.I)
+        if m:
+            limit = int(m.group(1))
+        head = re.split(r"\bwhere\b|\border by\b|\blimit\b", text,
+                        flags=re.I)[0].strip()
+        m = re.match(r"select (.+?) from (\w+)$", head, re.I)
+        cols, table = m.group(1).strip(), m.group(2)
+        where = None
+        m = re.search(r"\bwhere\b(.+?)(?:\border by\b|\blimit\b|$)",
+                      text, re.I)
+        if m:
+            where = m.group(1).strip()
+        q = self.client.table(table).select(
+            "*" if cols.lower() in ("*", "c.*", "i.*") else cols)
+        if where:
+            q = self._where(q, where, params)
+        if order_col:
+            q = q.order(order_col, desc=order_desc)
+        if limit is not None:
+            q = q.limit(limit)
+        return q.execute().data
+
+    def _where(self, q, where, params):
+        """Add WHERE parts to a Supabase query. Each ? uses the
+        next value from params, in order."""
+        i = 0
+        for part in [p.strip() for p in
+                     re.split(r"\s+and\s+", where, flags=re.I)]:
+            m = re.match(r"lower\((\w+)\)\s*=\s*\?", part, re.I)
+            if m:
+                q = q.ilike(m.group(1), params[i])
+                i += 1
+                continue
+            m = re.match(r"(\w+)\s*<=\s*\?", part)
+            if m:
+                q = q.lte(m.group(1), params[i])
+                i += 1
+                continue
+            m = re.match(r"(\w+)\s*=\s*\?", part)
+            if m:
+                q = q.eq(m.group(1), params[i])
+                i += 1
+                continue
+            m = re.match(r"(\w+)\s*=\s*'([^']*)'", part)
+            if m:
+                q = q.eq(m.group(1), m.group(2))
+                continue
+            if part.lower().startswith("substr(created_at"):
+                # "Messages today": created_at is stored as an ISO
+                # date-time string, so today means the date prefix.
+                today = datetime.now(timezone.utc).date()
+                tomorrow = today + timedelta(days=1)
+                q = q.gte("created_at", today.isoformat())
+                q = q.lt("created_at", tomorrow.isoformat())
+                continue
+            raise ValueError("WHERE not supported in Supabase mode: " + part)
+        return q
+
+    def _join_select(self, text, params):
+        """The three JOIN queries: fetch both tables, join in Python."""
+        low = text.lower()
+        limit = None
+        m = re.search(r"\blimit (\d+)\s*$", low)
+        if m:
+            limit = int(m.group(1))
+        if "count(m.id)" in low:
+            # My chats: each chat with how many messages it has.
+            chats = self.client.table("chats").select("*").eq(
+                "user_id", params[0]).order("id", desc=True).execute().data
+            if not chats:
+                return []
+            ids = [c["id"] for c in chats]
+            msgs = self.client.table("messages").select("chat_id").in_(
+                "chat_id", ids).execute().data
+            counts = {}
+            for msg in msgs:
+                counts[msg["chat_id"]] = counts.get(msg["chat_id"], 0) + 1
+            return [{**c, "messages": counts.get(c["id"], 0)}
+                    for c in chats]
+        if "from chats c" in low:
+            # Admin: chats with the buyer's name.
+            q = self.client.table("chats").select("*").order("id", desc=True)
+            if limit is not None:
+                q = q.limit(limit)
+            chats = q.execute().data
+            users = {u["id"]: u for u in self.client.table("users").select(
+                "id,name").execute().data}
+            return [{**c, "user_name": users.get(
+                c.get("user_id"), {}).get("name")} for c in chats]
+        if "from inquiries i" in low:
+            # Admin: open questions with the buyer's name and email.
+            rows = self.client.table("inquiries").select("*").eq(
+                "status", "open").order("id", desc=True).execute().data
+            users = {u["id"]: u for u in self.client.table("users").select(
+                "id,name,email").execute().data}
+            return [{**r,
+                     "user_name": users.get(
+                         r.get("user_id"), {}).get("name"),
+                     "user_email": users.get(
+                         r.get("user_id"), {}).get("email")}
+                    for r in rows]
+        raise ValueError("JOIN not supported in Supabase mode: " + text[:80])
+
+    @staticmethod
+    def _split_values(text):
+        """Split a VALUES list on commas, keeping quoted text whole."""
+        parts, buf, in_quote = [], "", False
+        for ch in text:
+            if ch == "'":
+                in_quote = not in_quote
+                buf += ch
+            elif ch == "," and not in_quote:
+                parts.append(buf)
+                buf = ""
+            else:
+                buf += ch
+        parts.append(buf)
+        return parts
+
+    def _insert(self, text, params):
+        m = re.match(r"insert into (\w+)\s*\(([^)]+)\)\s*values\s*\((.+)\)$",
+                     text, re.I)
+        cols = [c.strip() for c in m.group(2).split(",")]
+        values, i = [], 0
+        for tok in self._split_values(m.group(3)):
+            tok = tok.strip()
+            if tok == "?":
+                values.append(params[i])
+                i += 1
+            elif tok.upper() == "NULL":
+                values.append(None)
+            elif tok.startswith("'") and tok.endswith("'"):
+                values.append(tok[1:-1].replace("''", "'"))
+            else:
+                values.append(int(tok))
+        row = dict(zip(cols, values))
+        data = self.client.table(m.group(1)).insert(row).execute().data
+        return data or [row]
+
+    def _update(self, text, params):
+        m = re.match(r"update (\w+) set (.+?) where (.+)$", text, re.I)
+        vals, i = {}, 0
+        for part in m.group(2).split(","):
+            col, _, tok = part.strip().partition("=")
+            tok = tok.strip()
+            if tok == "?":
+                vals[col.strip()] = params[i]
+                i += 1
+            elif tok.startswith("'"):
+                vals[col.strip()] = tok[1:-1]
+            else:
+                vals[col.strip()] = tok
+        m2 = re.match(r"(\w+)\s*=\s*\?", m.group(3).strip())
+        q = self.client.table(m.group(1)).update(vals)
+        if m2:
+            q = q.eq(m2.group(1), params[i])
+        return q.execute().data or []
+
+    def _delete(self, text, params):
+        m = re.match(r"delete from (\w+) where (\w+)\s*=\s*\?", text, re.I)
+        self.client.table(m.group(1)).delete().eq(
+            m.group(2), params[0]).execute()
+        return []
+
+
 def get_db():
-    """Open one database link for this web request."""
+    """One database link for this web request. Supabase when it is
+    set up, otherwise the local SQLite file, as before."""
+    if USE_SUPABASE:
+        return SupaDB(_get_sb_client())
     if "db" not in g:
         g.db = sqlite3.connect(DB_FILE)
         g.db.row_factory = sqlite3.Row
@@ -708,8 +463,100 @@ def close_db(error):
         db.close()
 
 
+def _supabase_probe():
+    """One tiny read to check Supabase really works: right key,
+    right project, and the tables let the anon role read them.
+    Returns None if it works, or the error text if not."""
+    try:
+        _get_sb_client().table("cars").select("id").limit(1).execute()
+        return None
+    except Exception as exc:  # noqa: BLE001 - any failure means no Supabase
+        return str(exc)[:200]
+
+
+def _chunks(rows, size=100):
+    """Cut a list into small chunks, for bulk inserts."""
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
+
+
+def init_supabase():
+    """Seed Supabase if it is empty. The tables already exist
+    (made in the Supabase dashboard). Only adds what is missing,
+    so running twice is safe."""
+    client = _get_sb_client()
+    # Cars: add the seed cars that are not there yet.
+    have = {(r["make"], r["model"], r["year"], r["price_fob"])
+            for r in client.table("cars").select(
+                "make,model,year,price_fob").execute().data}
+    new_cars = []
+    for row in seed_car_rows():
+        key = (row[0], row[1], row[2], row[4])
+        if key not in have:
+            new_cars.append({"make": row[0], "model": row[1],
+                             "year": row[2], "distance_km": row[3],
+                             "price_fob": row[4], "body_type": row[5],
+                             "status": row[6]})
+            have.add(key)
+    for chunk in _chunks(new_cars):
+        client.table("cars").insert(chunk).execute()
+    # Import rules: upsert by country (country is UNIQUE), so the
+    # seed values fix any old wrong age limits.
+    rules = [{"country": c, "max_car_age_years": a, "notes": n}
+             for (c, a, n) in SAMPLE_RULES]
+    for chunk in _chunks(rules):
+        client.table("import_rules").upsert(
+            chunk, on_conflict="country").execute()
+    # FAQs: add the seed questions that are not there yet.
+    have_q = {r["question"] for r in client.table("faqs").select(
+        "question").execute().data}
+    new_faqs = [{"question": q, "answer": a, "topic": t}
+                for (q, a, t, k) in SAMPLE_FAQS if q not in have_q]
+    for chunk in _chunks(new_faqs):
+        client.table("faqs").insert(chunk).execute()
+    # Sample shipment ATJ-1001, so tracking works at once.
+    ships = client.table("shipments").select("id").eq(
+        "tracking_no", "ATJ-1001").execute().data
+    if not ships:
+        user = client.table("users").select("id").eq(
+            "email", "buyer@example.com").execute().data
+        if user:
+            user_id = user[0]["id"]
+        else:
+            user_id = client.table("users").insert(
+                {"name": "Demo Buyer", "email": "buyer@example.com",
+                 "country": "Jamaica", "role": "buyer"}).execute().data[0]["id"]
+        car = client.table("cars").select("id").order(
+            "id").limit(1).execute().data
+        if car:
+            invoice = client.table("invoices").insert(
+                {"user_id": user_id, "car_id": car[0]["id"],
+                 "total_price": 2550, "status": "Paid"}).execute().data[0]
+            client.table("shipments").insert(
+                {"invoice_id": invoice["id"], "vessel": "CNC BANGKOK",
+                 "tracking_no": "ATJ-1001", "status": "On the way",
+                 "port": "Kingston, Jamaica"}).execute()
+
+
 def init_db():
     """Make the 10 tables from the proposal, and add sample data."""
+    global USE_SUPABASE, _SUPABASE_ERROR
+    if USE_SUPABASE:
+        # First check Supabase really answers. If it does not
+        # (wrong key, or the tables do not let the anon role use
+        # them yet), keep running on the local file instead of
+        # breaking the whole site. The reason shows on /health.
+        _SUPABASE_ERROR = _supabase_probe()
+        if _SUPABASE_ERROR is not None:
+            print("Supabase test read failed, so the bot keeps using"
+                  " the local file for now:", _SUPABASE_ERROR, flush=True)
+            USE_SUPABASE = False
+        else:
+            try:
+                init_supabase()
+            except Exception as exc:  # noqa: BLE001 - seed is best effort
+                print("Supabase seed failed:", exc, flush=True)
+            return
     db = sqlite3.connect(DB_FILE)
     db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -1365,6 +1212,9 @@ def admin():
     return render_template(
         "admin.html", health={"app": "Running", "db_ok": db_ok,
                               "tables": tables,
+                              "db_mode": "supabase" if USE_SUPABASE
+                              else "sqlite",
+                              "supabase_error": _SUPABASE_ERROR,
                               "cache_hits": _CACHE_STATS["hits"],
                               "cache_misses": _CACHE_STATS["misses"],
                               "cached_tables": sorted(_CACHE.keys())},
@@ -1433,13 +1283,18 @@ def admin_faq_delete(faq_id):
 
 @app.route("/health")
 def health():
-    """Tiny health page: is the bot up, and is the cache working?"""
-    return jsonify({
+    """Tiny health page: is the bot up, and is the cache working?
+    Also shows which database is live (supabase or sqlite)."""
+    info = {
         "status": "ok",
+        "db": "supabase" if USE_SUPABASE else "sqlite",
         "cache_hits": _CACHE_STATS["hits"],
         "cache_misses": _CACHE_STATS["misses"],
         "cached_tables": sorted(_CACHE.keys()),
-    })
+    }
+    if _SUPABASE_ERROR:
+        info["supabase_error"] = _SUPABASE_ERROR
+    return jsonify(info)
 
 
 @app.route("/policies")

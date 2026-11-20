@@ -231,15 +231,35 @@ countries, and "show me cars under $<amount>" from the real cars.
    question gets the answer at once. The admin can also add or
    delete Knowledge base entries by hand.
 
-## Supabase — not connected yet
+## Supabase — the live database
 
-The live bot still uses SQLite. On Vercel the SQLite file lives in
-`/tmp`, so it is lost when the server restarts — user accounts and
-chat history will only be permanent once the app is connected to the
-Supabase project `jlbapnqzntqlyjuqvtmq` (tables already made there).
-That needs the Supabase anon key from the dashboard
-(Settings > API > anon public key), set as `SUPABASE_URL` and
-`SUPABASE_ANON_KEY` on Vercel. Never put the key in code or GitHub.
+When `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set (as environment
+variables, never in code), the bot reads and writes Supabase project
+`jlbapnqzntqlyjuqvtmq` instead of the local SQLite file — users,
+cars, chats, messages, inquiries, invoices, shipments, import rules,
+reviews, FAQs and the crawl queue. The first start seeds Supabase
+from the same seed data (317 cars, 77 import rules, 20 FAQs) and
+adds the sample shipment ATJ-1001, only adding what is missing.
+When the two settings are not set, the bot uses SQLite, as before.
+If Supabase is set but the startup test read fails (for example the
+tables do not let the anon role use them yet — run the GRANTs below),
+the bot keeps running on SQLite and says why on `/health`.
+
+The Supabase tables need these grants for the anon role (run once
+in Supabase Dashboard > SQL Editor):
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
+  TO anon, authenticated;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public
+  TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO anon, authenticated;
+```
+
+Never put the key in code or GitHub.
 
 ## How I built this
 
