@@ -1,24 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Afridi Trading Bot — Home{% endblock %}
 {% block content %}
-<section class="hero">
-  <img class="hero-logo" src="/static/logo.png" alt="Afridi Trading Japan logo" onerror="this.style.display='none'">
-  <h1>Buy a Japanese used car — talk to our bot</h1>
-  <p class="slogan">WHAT YOU SEE IS WHAT YOU RECEIVE</p>
-  <p>Ask about a car, a price, an auction grade, shipping, or import rules.
-  The bot answers at once, day and night.</p>
-  <form class="hero-search" method="get" action="/cars">
-    <input type="text" name="make" placeholder="Search cars by make, e.g. Toyota" aria-label="Search cars by make">
-    <button type="submit">Search cars</button>
-  </form>
-  <div class="hero-stats">
-    <div><strong>4.7 / 5</strong><span>buyer rating</span></div>
-    <div><strong>JUMVEA</strong><span>approved exporter</span></div>
-    <div><strong>Day &amp; night</strong><span>bot answers</span></div>
-  </div>
-</section>
-
-<h2>Talk to the bot</h2>
+<p class="slogan">WHAT YOU SEE IS WHAT YOU RECEIVE</p>
 <div class="chat-card">
   <div class="chat-head">
     <img src="/static/logo.png" alt="Afridi Trading Bot" onerror="this.style.display='none'">
@@ -51,28 +34,5 @@
   <p><strong>Guest chat:</strong> you can talk to the bot without an account, but guest chats are <strong>not saved</strong>. <a href="/auth/sign-up">Sign up free</a> and your chats will be saved under your account, so you never lose them.</p>
 </div>
 {% endif %}
-<p><a class="btn btn-outline" href="/policies">Read our Policies — payment, shipping, freight, insurance and refunds</a></p>
-
-<h2>Things the bot can do</h2>
-<p>The bot does not only talk — it does things for you:</p>
-<div class="feature-grid">
-  <div class="feature-card"><div class="icon">🚗</div><h3>Find a car</h3><p>By budget, make or body type.</p></div>
-  <div class="feature-card"><div class="icon">💲</div><h3>Delivered price</h3><p>Works out the price to your port.</p></div>
-  <div class="feature-card"><div class="icon">🧾</div><h3>Make an invoice</h3><p>For a car you choose.</p></div>
-  <div class="feature-card"><div class="icon">🚢</div><h3>Track shipment</h3><p>Follow your car by its number.</p></div>
-  <div class="feature-card"><div class="icon">📋</div><h3>Explain the rules</h3><p>Auction grades, import rules, policies and freight.</p></div>
-  <div class="feature-card"><div class="icon">🧑</div><h3>Ask a human</h3><p>Saves a hard question for a human to answer.</p></div>
-</div>
-
-<h2>How the bot is built</h2>
-<p>Simple ideas, in easy words:</p>
-<ol class="steps">
-  <li><b>Brand voice:</b> the bot always speaks as Afridi Trading Japan, in simple polite words. Its promise is: WHAT YOU SEE IS WHAT YOU RECEIVE.</li>
-  <li><b>True answers only:</b> the bot only answers from its own knowledge base and database — cars, prices, policies, freight and import rules. If it does not know, it says so and asks a human, instead of guessing a price, a grade or a refund.</li>
-  <li><b>Tool actions:</b> the bot can do things — make an invoice, track a shipment, and save your question for a human.</li>
-  <li><b>Guardrails:</b> the bot never promises a price or grade it has not checked, never takes money, never changes a price, and sends hard questions to a human.</li>
-  <li><b>Human handover:</b> every chat is saved in the database, so the admin can read what the bot said and take over at any time.</li>
-</ol>
-<p class="muted">No paid API, no vector database, no big AI library — just Python, Flask and a simple keyword brain.</p>
 <script src="/static/js/chat.js"></script>
 {% endblock %}
