@@ -83,3 +83,6 @@ button { transition: transform 0.15s ease, background 0.15s ease; }
 button:hover { transform: scale(1.05); background: #b00; }
 nav a { transition: color 0.15s ease; }
 main { animation: fadeIn 0.6s ease-in; }
+
+/* Error message on sign-up / sign-in pages. */
+.error { color: #b00020; font-weight: bold; }

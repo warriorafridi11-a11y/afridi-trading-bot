@@ -13,6 +13,9 @@ The bot answers at once, day and night.</p>
   <button type="submit">Send</button>
 </form>
 <p class="hint">Try these: "cars under $2000" · "what is grade 4" · "track ATJ-1001" · "import rules for Ghana" · "what is your refund policy" · "how much is freight to Jamaica"</p>
+{% if not session.get('user_id') %}
+<p><strong>Guest chat:</strong> you can talk to the bot without an account, but guest chats are <strong>not saved</strong>. <a href="/auth/sign-up">Sign up free</a> and your chats will be saved under your account, so you never lose them.</p>
+{% endif %}
 <p><a href="/policies">Read our Policies — payment, shipping, freight, insurance and refunds</a></p>
 
 <h2>Things the bot can do</h2>

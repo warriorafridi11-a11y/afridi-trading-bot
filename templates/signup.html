@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Sign up — Afridi Trading Bot{% endblock %}
+{% block content %}
+<h1>Sign up</h1>
+<p>Make an account so you never lose your chat history. Your chats are saved under your account, and you can open them again any time from "My chats".</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/auth/sign-up">
+  <label>Your name<br><input type="text" name="name" required></label><br>
+  <label>Email<br><input type="email" name="email" required></label><br>
+  <label>Password<br><input type="password" name="password" required minlength="4"></label><br>
+  <button type="submit">Sign up</button>
+</form>
+<p>Already have an account? <a href="/auth/sign-in">Sign in</a>.</p>
+{% endblock %}

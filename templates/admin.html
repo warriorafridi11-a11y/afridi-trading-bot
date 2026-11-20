@@ -3,23 +3,80 @@
 {% block content %}
 <h1>Admin panel</h1>
 
-<h2>Recent chat messages</h2>
+<h2>Health — is the app ok?</h2>
 <table>
-  <tr><th>From</th><th>Message</th></tr>
-  {% for m in chats %}
-  <tr><td>{{ m.sender }}</td><td>{{ m.text }}</td></tr>
+  <tr><th>App</th><td>{{ health.app }}</td></tr>
+  <tr><th>Database</th><td>{% if health.db_ok %}OK{% else %}ERROR — database did not answer{% endif %}</td></tr>
+  <tr><th>Tables in the database</th><td>{{ health.tables }}</td></tr>
+  <tr><th>Cache — items saved</th><td>{{ health.cached_tables | join(', ') if health.cached_tables else 'none yet' }}</td></tr>
+  <tr><th>Cache — hits / misses</th><td>{{ health.cache_hits }} hits / {{ health.cache_misses }} misses</td></tr>
+</table>
+
+<h2>Usage — how much is happening?</h2>
+<table>
+  <tr><th>Users</th><td>{{ counts.users }}</td></tr>
+  <tr><th>Chats</th><td>{{ counts.chats }}</td></tr>
+  <tr><th>Messages</th><td>{{ counts.messages }}</td></tr>
+  <tr><th>Messages today</th><td>{{ counts.messages_today }}</td></tr>
+  <tr><th>Invoices</th><td>{{ counts.invoices }}</td></tr>
+  <tr><th>Open questions for a human</th><td>{{ counts.inquiries }}</td></tr>
+  <tr><th>FAQs</th><td>{{ counts.faqs }}</td></tr>
+</table>
+
+<h2>Recent users</h2>
+<table>
+  <tr><th>Name</th><th>Email</th><th>Role</th></tr>
+  {% for u in users %}
+  <tr><td>{{ u.name }}</td><td>{{ u.email }}</td><td>{{ u.role }}</td></tr>
   {% else %}
-  <tr><td colspan="2">No chats yet.</td></tr>
+  <tr><td colspan="3">No users yet.</td></tr>
   {% endfor %}
 </table>
 
-<h2>Questions for a human</h2>
+<h2>Recent chats</h2>
+<table>
+  <tr><th>Chat</th><th>Customer</th><th>Started</th></tr>
+  {% for c in chats %}
+  <tr><td>#{{ c.id }}</td><td>{{ c.user_name or 'Guest' }}</td><td>{{ c.started_at }}</td></tr>
+  {% else %}
+  <tr><td colspan="3">No chats yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Recent chat messages</h2>
+<table>
+  <tr><th>From</th><th>Message</th></tr>
+  {% for m in messages %}
+  <tr><td>{{ m.sender }}</td><td>{{ m.text }}</td></tr>
+  {% else %}
+  <tr><td colspan="2">No messages yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Questions for a human (open)</h2>
 <table>
   <tr><th>Question</th><th>Status</th></tr>
   {% for q in questions %}
   <tr><td>{{ q.question }}</td><td>{{ q.status }}</td></tr>
   {% else %}
   <tr><td colspan="2">No open questions.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>FAQs — add or delete</h2>
+<form method="post" action="/admin/faq/add">
+  <label>Question<br><input type="text" name="question" required style="width:100%"></label><br>
+  <label>Answer<br><input type="text" name="answer" required style="width:100%"></label><br>
+  <label>Topic<br><input type="text" name="topic" placeholder="e.g. payment"></label><br>
+  <button type="submit">Add FAQ</button>
+</form>
+<table>
+  <tr><th>Question</th><th>Topic</th><th></th></tr>
+  {% for f in faqs %}
+  <tr><td>{{ f.question }}</td><td>{{ f.topic }}</td>
+      <td><form method="post" action="/admin/faq/delete/{{ f.id }}" style="margin:0"><button type="submit">Delete</button></form></td></tr>
+  {% else %}
+  <tr><td colspan="3">No FAQs yet.</td></tr>
   {% endfor %}
 </table>
 

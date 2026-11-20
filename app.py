@@ -11,9 +11,18 @@ import sqlite3
 import time
 from datetime import datetime
 
-from flask import Flask, g, jsonify, render_template, request
+from flask import (Flask, g, jsonify, redirect, render_template,
+                   request, session, url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
+# Secret key for sign-in sessions. On Vercel set SECRET_KEY in the
+# project settings; the default below is only for local testing.
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
+
+# The admin of this bot. When this email signs up or signs in, the
+# account gets the SUPER_ADMIN role.
+ADMIN_EMAIL = "warriorafridi11@gmail.com"
 
 # The database is one small file. It is made by itself the first time.
 # On Vercel the code folder is read-only, so the file goes in /tmp.
@@ -219,6 +228,30 @@ def cached_list(name, sql):
     return rows
 
 
+# ---------- sign-in helpers ----------
+
+def role_for_email(email):
+    """The admin email is SUPER_ADMIN. Everyone else is a buyer."""
+    if email.strip().lower() == ADMIN_EMAIL:
+        return "SUPER_ADMIN"
+    return "buyer"
+
+
+def current_user():
+    """The signed-in user, or None for a guest."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    db = get_db()
+    return db.execute("SELECT * FROM users WHERE id = ?",
+                      (user_id,)).fetchone()
+
+
+def is_admin(user):
+    """True only for the admin account."""
+    return user is not None and user["role"] == "SUPER_ADMIN"
+
+
 # ---------- database helpers ----------
 
 def get_db():
@@ -275,6 +308,11 @@ def init_db():
             id INTEGER PRIMARY KEY, question TEXT, answer TEXT,
             topic TEXT);
     """)
+    # Add a password column to users if the table was made before
+    # sign-up existed. Passwords are stored HASHED, never plain text.
+    cols = [r[1] for r in db.execute("PRAGMA table_info(users)")]
+    if "password_hash" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
     # Add sample cars only the first time, when the table is empty.
     count = db.execute("SELECT COUNT(*) FROM cars").fetchone()[0]
     if count == 0:
@@ -615,6 +653,195 @@ def home():
     return render_template("index.html")
 
 
+# ---------- sign-up, sign-in, my chats ----------
+
+@app.route("/auth/sign-up", methods=["GET", "POST"])
+def sign_up():
+    """Sign-up page: name, email and password only. No Google login."""
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        if not name or not email or "@" not in email or len(password) < 4:
+            return render_template("signup.html", error="Please fill in "
+                                   "your name, a real email, and a "
+                                   "password of 4 letters or more.")
+        db = get_db()
+        exists = db.execute("SELECT id FROM users WHERE email = ?",
+                            (email,)).fetchone()
+        if exists:
+            return render_template(
+                "signup.html",
+                error="That email already has an account. Please sign in.")
+        role = role_for_email(email)
+        db.execute(
+            "INSERT INTO users (name, email, country, role, password_hash)"
+            " VALUES (?, ?, '', ?, ?)",
+            (name, email, role, generate_password_hash(password)))
+        db.commit()
+        user = db.execute("SELECT * FROM users WHERE email = ?",
+                          (email,)).fetchone()
+        session["user_id"] = user["id"]
+        session["user_name"] = user["name"]
+        return redirect(url_for("home"))
+    return render_template("signup.html", error=None)
+
+
+@app.route("/auth/sign-in", methods=["GET", "POST"])
+def sign_in():
+    """Sign-in page: email and password."""
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        db = get_db()
+        user = db.execute("SELECT * FROM users WHERE email = ?",
+                          (email,)).fetchone()
+        if user is None or not user["password_hash"] or not \
+                check_password_hash(user["password_hash"], password):
+            return render_template(
+                "signin.html",
+                error="Wrong email or password. Please try again.")
+        # The admin email is SUPER_ADMIN even if the account is old.
+        if user["role"] != role_for_email(email):
+            db.execute("UPDATE users SET role = ? WHERE id = ?",
+                       (role_for_email(email), user["id"]))
+            db.commit()
+            user = db.execute("SELECT * FROM users WHERE id = ?",
+                              (user["id"],)).fetchone()
+        session["user_id"] = user["id"]
+        session["user_name"] = user["name"]
+        return redirect(url_for("home"))
+    return render_template("signin.html", error=None)
+
+
+@app.route("/auth/sign-out")
+def sign_out():
+    """Sign out and go back to the home page."""
+    session.clear()
+    return redirect(url_for("home"))
+
+
+@app.route("/my-chats")
+def my_chats():
+    """My chats: all the signed-in user's old chats, newest first."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("sign_in"))
+    db = get_db()
+    chats = db.execute(
+        "SELECT c.*, COUNT(m.id) AS messages FROM chats c"
+        " LEFT JOIN messages m ON m.chat_id = c.id"
+        " WHERE c.user_id = ? GROUP BY c.id ORDER BY c.id DESC",
+        (user["id"],)).fetchall()
+    return render_template("my_chats.html", chats=chats)
+
+
+@app.route("/my-chats/<int:chat_id>")
+def view_chat(chat_id):
+    """One old chat, with all its messages."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("sign_in"))
+    db = get_db()
+    chat = db.execute(
+        "SELECT * FROM chats WHERE id = ? AND user_id = ?",
+        (chat_id, user["id"])).fetchone()
+    if chat is None:
+        return "Chat not found.", 404
+    messages = db.execute(
+        "SELECT * FROM messages WHERE chat_id = ? ORDER BY id",
+        (chat_id,)).fetchall()
+    return render_template("chat_view.html", chat=chat, messages=messages)
+
+
+# ---------- admin panel (admin only) ----------
+
+@app.route("/admin")
+def admin():
+    """Admin dashboard: health, usage, lists and FAQs. Admin only."""
+    user = current_user()
+    if not is_admin(user):
+        return redirect(url_for("sign_in"))
+    db = get_db()
+    try:
+        db.execute("SELECT 1").fetchone()
+        db_ok = True
+    except Exception:
+        db_ok = False
+    tables = db.execute(
+        "SELECT COUNT(*) FROM sqlite_master"
+        " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").fetchone()[0]
+    counts = {
+        "users": db.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+        "chats": db.execute("SELECT COUNT(*) FROM chats").fetchone()[0],
+        "messages": db.execute(
+            "SELECT COUNT(*) FROM messages").fetchone()[0],
+        "invoices": db.execute(
+            "SELECT COUNT(*) FROM invoices").fetchone()[0],
+        "inquiries": db.execute(
+            "SELECT COUNT(*) FROM inquiries").fetchone()[0],
+        "faqs": db.execute("SELECT COUNT(*) FROM faqs").fetchone()[0],
+        "messages_today": db.execute(
+            "SELECT COUNT(*) FROM messages"
+            " WHERE substr(created_at, 1, 10) = date('now')").fetchone()[0],
+    }
+    users = db.execute(
+        "SELECT * FROM users ORDER BY id DESC LIMIT 10").fetchall()
+    chats = db.execute(
+        "SELECT c.*, u.name AS user_name FROM chats c"
+        " LEFT JOIN users u ON u.id = c.user_id"
+        " ORDER BY c.id DESC LIMIT 10").fetchall()
+    messages = db.execute(
+        "SELECT * FROM messages ORDER BY id DESC LIMIT 50").fetchall()
+    questions = db.execute(
+        "SELECT * FROM inquiries WHERE status = 'Open'"
+        " ORDER BY id DESC").fetchall()
+    faqs = db.execute("SELECT * FROM faqs ORDER BY id").fetchall()
+    cars = db.execute("SELECT * FROM cars").fetchall()
+    invoices = db.execute("SELECT * FROM invoices").fetchall()
+    ships = db.execute("SELECT * FROM shipments").fetchall()
+    return render_template(
+        "admin.html", health={"app": "Running", "db_ok": db_ok,
+                              "tables": tables,
+                              "cache_hits": _CACHE_STATS["hits"],
+                              "cache_misses": _CACHE_STATS["misses"],
+                              "cached_tables": sorted(_CACHE.keys())},
+        counts=counts, users=users, chats=chats, messages=messages,
+        questions=questions, faqs=faqs, cars=cars, invoices=invoices,
+        ships=ships)
+
+
+@app.route("/admin/faq/add", methods=["POST"])
+def admin_faq_add():
+    """Admin adds one FAQ. Clears the FAQ cache so it shows at once."""
+    user = current_user()
+    if not is_admin(user):
+        return redirect(url_for("sign_in"))
+    question = request.form.get("question", "").strip()
+    answer = request.form.get("answer", "").strip()
+    topic = request.form.get("topic", "").strip() or "general"
+    if question and answer:
+        db = get_db()
+        db.execute("INSERT INTO faqs (question, answer, topic)"
+                   " VALUES (?, ?, ?)", (question, answer, topic))
+        db.commit()
+        _CACHE.pop("faqs", None)
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/faq/delete/<int:faq_id>", methods=["POST"])
+def admin_faq_delete(faq_id):
+    """Admin deletes one FAQ. Clears the FAQ cache too."""
+    user = current_user()
+    if not is_admin(user):
+        return redirect(url_for("sign_in"))
+    db = get_db()
+    db.execute("DELETE FROM faqs WHERE id = ?", (faq_id,))
+    db.commit()
+    _CACHE.pop("faqs", None)
+    return redirect(url_for("admin"))
+
+
 @app.route("/health")
 def health():
     """Tiny health page: is the bot up, and is the cache working?"""
@@ -672,22 +899,6 @@ def track():
     return render_template("track.html", code=code, ship=ship)
 
 
-@app.route("/admin")
-def admin():
-    """Admin page: all chats, cars, invoices and shipments."""
-    db = get_db()
-    chats = db.execute(
-        "SELECT * FROM messages ORDER BY id DESC LIMIT 50").fetchall()
-    cars = db.execute("SELECT * FROM cars").fetchall()
-    invoices = db.execute("SELECT * FROM invoices").fetchall()
-    ships = db.execute("SELECT * FROM shipments").fetchall()
-    questions = db.execute(
-        "SELECT * FROM inquiries WHERE status = 'Open'").fetchall()
-    return render_template("admin.html", chats=chats, cars=cars,
-                           invoices=invoices, ships=ships,
-                           questions=questions)
-
-
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     """Chat API. JavaScript sends a message, the bot answers as JSON."""
@@ -695,16 +906,23 @@ def api_chat():
     text = (data.get("message") or "").strip()
     if not text:
         return jsonify({"reply": "Please type a question first."})
+    # Guests can still chat, but guest chats are NOT saved.
+    # Only signed-in users get their chat history saved.
+    user = current_user()
+    if user is None:
+        return jsonify({"reply": bot_reply(text, None)})
     db = get_db()
     chat = db.execute(
-        "SELECT id FROM chats ORDER BY id DESC LIMIT 1").fetchone()
+        "SELECT id FROM chats WHERE user_id = ? AND status = 'Open'"
+        " ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
     if chat is None:
         db.execute("INSERT INTO chats (user_id, started_at, status)"
-                   " VALUES (1, ?, 'Open')",
-                   (datetime.now().isoformat(),))
+                   " VALUES (?, ?, 'Open')",
+                   (user["id"], datetime.now().isoformat()))
         db.commit()
         chat = db.execute(
-            "SELECT id FROM chats ORDER BY id DESC LIMIT 1").fetchone()
+            "SELECT id FROM chats WHERE user_id = ?"
+            " ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
     now = datetime.now().isoformat()
     db.execute("INSERT INTO messages (chat_id, sender, text, created_at)"
                " VALUES (?, 'buyer', ?, ?)", (chat["id"], text, now))
@@ -712,7 +930,7 @@ def api_chat():
     db.execute("INSERT INTO messages (chat_id, sender, text, created_at)"
                " VALUES (?, 'bot', ?, ?)", (chat["id"], reply, now))
     db.commit()
-    return jsonify({"reply": reply})
+    return jsonify({"reply": reply, "chat_id": chat["id"]})
 
 
 @app.route("/api/cars")

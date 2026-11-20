@@ -14,6 +14,13 @@
       <a href="/cars">Cars</a>
       <a href="/policies">Policies</a>
       <a href="/track">Track</a>
+      {% if session.get('user_id') %}
+      <a href="/my-chats">My chats</a>
+      <a href="/auth/sign-out">Sign out ({{ session.get('user_name') }})</a>
+      {% else %}
+      <a href="/auth/sign-in">Sign in</a>
+      <a href="/auth/sign-up">Sign up</a>
+      {% endif %}
       <a href="/admin">Admin</a>
     </nav>
   </header>

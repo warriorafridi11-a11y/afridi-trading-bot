@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Chat #{{ chat.id }} — Afridi Trading Bot{% endblock %}
+{% block content %}
+<h1>Chat #{{ chat.id }}</h1>
+<p>Started: {{ chat.started_at }}</p>
+<div class="chat-box">
+  {% for m in messages %}
+  <div class="msg {{ 'user' if m.sender == 'buyer' else 'bot' }}">{{ m.text }}</div>
+  {% else %}
+  <p>No messages in this chat yet.</p>
+  {% endfor %}
+</div>
+<p><a href="/my-chats">Back to My chats</a> · <a href="/">Talk to the bot</a></p>
+{% endblock %}

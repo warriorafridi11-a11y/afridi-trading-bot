@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}My chats — Afridi Trading Bot{% endblock %}
+{% block content %}
+<h1>My chats</h1>
+<p>Your saved chats. Tap one to open it again.</p>
+<table>
+  <tr><th>Chat</th><th>Started</th><th>Messages</th><th></th></tr>
+  {% for c in chats %}
+  <tr><td>Chat #{{ c.id }}</td><td>{{ c.started_at }}</td><td>{{ c.messages }}</td>
+      <td><a href="/my-chats/{{ c.id }}">Open</a></td></tr>
+  {% else %}
+  <tr><td colspan="4">No chats yet. Talk to the bot on the home page and your chat will be saved here.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

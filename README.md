@@ -89,7 +89,36 @@ no extra service. See the cache hits and misses on `/health`.
 - `/policies` — policies: payment, shipping, freight, insurance, documents, refunds
 - `/invoice/<car id>` — invoice for one car
 - `/track` — track a shipment, try `ATJ-1001`
-- `/admin` — admin panel: chats, cars, invoices, shipments
+- `/auth/sign-up` and `/auth/sign-in` — customer accounts (see below)
+- `/my-chats` — a signed-in customer's saved chats
+- `/admin` — admin panel (admin only): health, usage, users, chats,
+  open questions, FAQs (add/delete), cars, invoices, shipments
+
+## Sign-up and admin
+
+Customers can sign up with name, email and password. The password is
+stored HASHED (werkzeug `generate_password_hash`), never plain text.
+When a customer is signed in, their chats and messages are saved under
+their user id, and they can open old chats again from "My chats", so
+they never lose chat history. Guests can still chat, but guest chats
+are not saved — the home page says so honestly.
+
+`warriorafridi11@gmail.com` is the admin (`ADMIN_EMAIL` in app.py).
+When that email signs up or signs in, the account becomes SUPER_ADMIN.
+The admin page shows health (app running, database ok, cache hits and
+misses, number of tables), usage (users, chats, messages, messages
+today, invoices, open questions, FAQs), recent users and chats, and
+lets the admin add or delete FAQs.
+
+## Supabase — not connected yet
+
+The live bot still uses SQLite. On Vercel the SQLite file lives in
+`/tmp`, so it is lost when the server restarts — user accounts and
+chat history will only be permanent once the app is connected to the
+Supabase project `jlbapnqzntqlyjuqvtmq` (tables already made there).
+That needs the Supabase anon key from the dashboard
+(Settings > API > anon public key), set as `SUPABASE_URL` and
+`SUPABASE_ANON_KEY` on Vercel. Never put the key in code or GitHub.
 
 ## How I built this
 
