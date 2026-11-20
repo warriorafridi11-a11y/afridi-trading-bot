@@ -15,7 +15,11 @@ from flask import Flask, g, jsonify, render_template, request
 app = Flask(__name__)
 
 # The database is one small file. It is made by itself the first time.
-DB_FILE = os.path.join(os.path.dirname(__file__), "bot.db")
+# On Vercel the code folder is read-only, so the file goes in /tmp.
+if os.environ.get("VERCEL"):
+    DB_FILE = "/tmp/bot.db"
+else:
+    DB_FILE = os.path.join(os.path.dirname(__file__), "bot.db")
 
 # Simple shipping prices in US dollars, from Japan to each port.
 # These are sample prices for the demo, not live quotes.
@@ -391,6 +395,13 @@ def api_cars():
     db = get_db()
     rows = db.execute("SELECT * FROM cars ORDER BY price_fob").fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+# Make the database when the app starts. On Vercel this runs once
+# on a cold start; running "python app.py" also calls it below.
+# It is safe to run twice: tables are only made if missing, and
+# sample cars are only added when the cars table is empty.
+init_db()
 
 
 if __name__ == "__main__":
