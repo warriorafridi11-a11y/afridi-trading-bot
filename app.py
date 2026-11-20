@@ -301,8 +301,11 @@ class SupaDB:
             return q.limit(limit).execute().data
         # No LIMIT: fetch every row, 1000 at a time. PostgREST
         # returns at most 1000 rows in one call, so one call
-        # would silently drop the rest of the cars.
+        # would silently drop the rest of the cars. Order by id
+        # too: without a unique order, rows with the same price
+        # can appear twice or be skipped between pages.
         rows, start = [], 0
+        q = q.order("id")
         while True:
             page = q.range(start, start + 999).execute().data
             rows.extend(page)
@@ -502,10 +505,14 @@ def _select_all(client, table, cols, base=None):
     call would silently miss the rest — and the seed check would
     then add the missing cars a second time. Small tables finish
     in one call. `base` is an already-filtered query to page
-    through instead of a plain table read."""
+    through instead of a plain table read. Every page is ordered
+    by id as well: without a unique order, rows with the same
+    price (or no order at all) can appear twice or be skipped
+    between pages."""
     rows, start = [], 0
+    q = base if base is not None else client.table(table).select(cols)
+    q = q.order("id")
     while True:
-        q = base if base is not None else client.table(table).select(cols)
         page = q.range(start, start + 999).execute().data
         rows.extend(page)
         if len(page) < 1000:
